@@ -34,6 +34,7 @@ import com.optimizer.game.ui.theme.AccentPurple
 import com.optimizer.game.ui.theme.BoneWhite
 import com.optimizer.game.ui.theme.CanvasDark
 import com.optimizer.game.ui.theme.HairlineBorder
+import com.optimizer.game.ui.theme.NominalGreen
 import com.optimizer.game.ui.theme.ObsidianSurface
 import com.optimizer.game.ui.theme.ZincMuted
 
@@ -43,70 +44,46 @@ data class GameAppItem(
     val packageName: String,
     val recommendedFps: Int = 60,
     val maxSupportedFps: Int = 60,
-    val recommendationReason: String = "Engine native cap 60 FPS · 60Hz lock eliminates wasted GPU cycles"
+    val recommendationReason: String = "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals",
+    val isInstalled: Boolean = true
 ) {
     companion object {
-        fun createWithPreset(id: String, name: String, packageName: String): GameAppItem {
+        fun createWithPreset(
+            id: String,
+            name: String,
+            packageName: String,
+            isInstalled: Boolean = true
+        ): GameAppItem {
             val (recFps, maxFps, reason) = when {
                 packageName.contains("warframemobile", ignoreCase = true) -> Triple(
-                    90,
-                    120,
-                    "Supports high-RR · 90Hz lock delivers smooth 90 FPS with balanced thermals"
+                    60,
+                    60,
+                    "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals"
                 )
-                packageName.contains("genshin", ignoreCase = true) -> Triple(
+                packageName.contains("genshin", ignoreCase = true) || packageName.contains("yuanshen", ignoreCase = true) -> Triple(
                     60,
                     60,
-                    "Engine hard-capped at 60 FPS · 60Hz lock prevents thermal throttling"
-                )
-                packageName.contains("hkrpg", ignoreCase = true) || packageName.contains("starrail", ignoreCase = true) -> Triple(
-                    60,
-                    60,
-                    "Engine hard-capped at 60 FPS · 60Hz lock delivers 1:1 flat VSync"
+                    "Engine hard-capped at 60 FPS · 60Hz lock eliminates thermal throttling"
                 )
                 packageName.contains("wutheringwaves", ignoreCase = true) || packageName.contains("kurogame", ignoreCase = true) -> Triple(
                     60,
                     60,
-                    "Heavy GPU shader load · 60Hz lock recommended for sustained stability"
-                )
-                packageName.contains("warzone", ignoreCase = true) || packageName.contains("callofduty", ignoreCase = true) -> Triple(
-                    60,
-                    90,
-                    "High thermal load · 60Hz lock avoids severe thermal throttling"
+                    "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability"
                 )
                 packageName.contains("pubg", ignoreCase = true) || packageName.contains("tencent.ig", ignoreCase = true) -> Triple(
                     90,
                     120,
-                    "Supports high-RR · 90Hz lock provides stable competitive latency"
-                )
-                packageName.contains("mobile.legends", ignoreCase = true) -> Triple(
-                    90,
-                    120,
-                    "Supports high-RR · 90Hz lock recommended for ultra-low touch latency"
+                    "Supports up to 120 FPS · 90Hz lock recommended for competitive latency & thermals"
                 )
                 packageName.contains("freefire", ignoreCase = true) -> Triple(
                     90,
-                    90,
-                    "Supports 90 FPS · 90Hz lock delivers fluid reaction timing"
-                )
-                packageName.contains("minecraft", ignoreCase = true) -> Triple(
-                    90,
                     120,
-                    "Supports high-RR · 90Hz lock balances chunk rendering & battery"
-                )
-                packageName.contains("roblox", ignoreCase = true) -> Triple(
-                    60,
-                    60,
-                    "Engine capped at 60 FPS · 60Hz lock saves power & reduces heat"
-                )
-                packageName.contains("terraria", ignoreCase = true) -> Triple(
-                    60,
-                    60,
-                    "Pixel engine capped at 60 FPS · 60Hz lock preserves exact frame pacing"
+                    "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes"
                 )
                 else -> Triple(
                     60,
                     60,
-                    "Safe baseline · 60Hz lock stabilizes frame pacing & limits thermals"
+                    "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals"
                 )
             }
             return GameAppItem(
@@ -115,7 +92,8 @@ data class GameAppItem(
                 packageName = packageName,
                 recommendedFps = recFps,
                 maxSupportedFps = maxFps,
-                recommendationReason = reason
+                recommendationReason = reason,
+                isInstalled = isInstalled
             )
         }
     }
@@ -268,6 +246,23 @@ fun AppSelectorDrawer(
                                         fontWeight = FontWeight.Medium,
                                         color = if (isActive) AccentPurple else ZincMuted
                                     )
+                                }
+                                if (app.isInstalled) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(NominalGreen.copy(alpha = 0.12f))
+                                            .border(1.dp, NominalGreen.copy(alpha = 0.35f), RoundedCornerShape(2.dp))
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = "INSTALLED",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = NominalGreen
+                                        )
+                                    }
                                 }
                             }
                             Spacer(modifier = Modifier.height(2.dp))

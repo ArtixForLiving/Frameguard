@@ -45,6 +45,7 @@ fun FpsSegmentedControl(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     recommendedFps: Int = 60,
+    maxSupportedFps: Int = 120,
     options: List<Int> = listOf(60, 90, 120)
 ) {
     Row(
@@ -59,6 +60,13 @@ fun FpsSegmentedControl(
     ) {
         options.forEachIndexed { index, fps ->
             val isSelected = fps == selectedFps
+            val isAboveMax = fps > maxSupportedFps
+
+            val textColor = when {
+                isSelected -> CanvasDark
+                isAboveMax -> ZincMuted.copy(alpha = 0.4f)
+                else -> ZincMuted
+            }
 
             Box(
                 modifier = Modifier
@@ -83,7 +91,7 @@ fun FpsSegmentedControl(
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
-                        color = if (isSelected) CanvasDark else ZincMuted,
+                        color = textColor,
                         textAlign = TextAlign.Center
                     )
                     if (fps == recommendedFps) {
@@ -92,7 +100,7 @@ fun FpsSegmentedControl(
                             modifier = Modifier
                                 .size(5.dp)
                                 .clip(CircleShape)
-                                .background(if (isSelected) AccentPurple else AccentPurple)
+                                .background(AccentPurple)
                         )
                     }
                 }

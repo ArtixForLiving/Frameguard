@@ -38,13 +38,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private val defaultPresets = listOf(
-        GameAppItem.createWithPreset("warframe", "Warframe Mobile", "com.digitalextremes.warframemobile"),
-        GameAppItem.createWithPreset("wuwa", "Wuthering Waves", "com.kurogame.wutheringwaves.global"),
-        GameAppItem.createWithPreset("genshin", "Genshin Impact", "com.miHoYo.GenshinImpact"),
-        GameAppItem.createWithPreset("hsr", "Honkai: Star Rail", "com.HoYoverse.hkrpgoversea"),
-        GameAppItem.createWithPreset("codm", "Call of Duty: Warzone", "com.activision.callofduty.warzone")
+    data class SupportedGameDef(
+        val id: String,
+        val defaultName: String,
+        val candidatePackages: List<String>,
+        val recommendedFps: Int,
+        val maxSupportedFps: Int,
+        val recommendationReason: String
     )
+
+    companion object {
+        val SUPPORTED_CATALOG = listOf(
+            SupportedGameDef(
+                id = "warframe",
+                defaultName = "Warframe Mobile",
+                candidatePackages = listOf("com.digitalextremes.warframemobile"),
+                recommendedFps = 60,
+                maxSupportedFps = 60,
+                recommendationReason = "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals"
+            ),
+            SupportedGameDef(
+                id = "genshin",
+                defaultName = "Genshin Impact",
+                candidatePackages = listOf("com.miHoYo.GenshinImpact", "com.HoYoverse.GenshinImpact", "com.miHoYo.Yuanshen"),
+                recommendedFps = 60,
+                maxSupportedFps = 60,
+                recommendationReason = "Engine hard-capped at 60 FPS · 60Hz lock eliminates thermal throttling"
+            ),
+            SupportedGameDef(
+                id = "wuwa",
+                defaultName = "Wuthering Waves",
+                candidatePackages = listOf("com.kurogame.wutheringwaves.global", "com.kurogame.kj"),
+                recommendedFps = 60,
+                maxSupportedFps = 60,
+                recommendationReason = "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability"
+            ),
+            SupportedGameDef(
+                id = "pubg",
+                defaultName = "PUBG Mobile",
+                candidatePackages = listOf("com.tencent.ig", "com.pubg.krmobile", "com.pubg.imobile", "com.vng.pubgmobile", "com.tencent.tmgp.pubgmhd"),
+                recommendedFps = 90,
+                maxSupportedFps = 120,
+                recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for competitive latency & thermals"
+            ),
+            SupportedGameDef(
+                id = "freefire",
+                defaultName = "Free Fire",
+                candidatePackages = listOf("com.dts.freefireth", "com.dts.freefiremax"),
+                recommendedFps = 90,
+                maxSupportedFps = 120,
+                recommendationReason = "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes"
+            )
+        )
+    }
+
+    private val defaultPresets = SUPPORTED_CATALOG.map { def ->
+        GameAppItem(
+            id = def.id,
+            name = def.defaultName,
+            packageName = def.candidatePackages.first(),
+            recommendedFps = def.recommendedFps,
+            maxSupportedFps = def.maxSupportedFps,
+            recommendationReason = def.recommendationReason,
+            isInstalled = false
+        )
+    }
 
     private val _selectedApp = MutableStateFlow(defaultPresets[0])
     val selectedApp: StateFlow<GameAppItem> = _selectedApp.asStateFlow()
@@ -55,7 +113,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isAppDrawerOpen = MutableStateFlow(false)
     val isAppDrawerOpen: StateFlow<Boolean> = _isAppDrawerOpen.asStateFlow()
 
-    private val _targetFps = MutableStateFlow(90)
+    private val _targetFps = MutableStateFlow(defaultPresets[0].recommendedFps)
     val targetFps: StateFlow<Int> = _targetFps.asStateFlow()
 
     private val _isDozeEnabled = MutableStateFlow(true)
@@ -106,6 +164,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Initialize optimizer engine with active game preset
+        GameOptimizerEngine.setTargetPackage(defaultPresets[0].packageName)
+        GameOptimizerEngine.setTargetFps(defaultPresets[0].recommendedFps)
+
         loadInstalledGames()
 
         val dm = application.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
@@ -131,18 +193,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val context = getApplication<Application>()
                 val pm = context.packageManager
-                val intent = Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                }
-                val resolveInfos = pm.queryIntentActivities(intent, 0)
-                val installed = resolveInfos.mapNotNull {
-                    val pkg = it.activityInfo?.packageName ?: return@mapNotNull null
-                    val name = it.loadLabel(pm).toString()
-                    GameAppItem.createWithPreset(id = pkg, name = name, packageName = pkg)
+
+                val installedPackages = try {
+                    pm.getInstalledPackages(0).associateBy { it.packageName }
+                } catch (_: Exception) {
+                    emptyMap()
                 }
 
-                val merged = (defaultPresets + installed).distinctBy { it.packageName }
-                _availableApps.value = merged
+                val resolvedApps = SUPPORTED_CATALOG.map { gameDef ->
+                    val installedPkg = gameDef.candidatePackages.firstOrNull { installedPackages.containsKey(it) }
+                    if (installedPkg != null) {
+                        val appInfo = installedPackages[installedPkg]?.applicationInfo
+                        val appLabel = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: gameDef.defaultName
+                        GameAppItem(
+                            id = gameDef.id,
+                            name = appLabel,
+                            packageName = installedPkg,
+                            recommendedFps = gameDef.recommendedFps,
+                            maxSupportedFps = gameDef.maxSupportedFps,
+                            recommendationReason = gameDef.recommendationReason,
+                            isInstalled = true
+                        )
+                    } else {
+                        GameAppItem(
+                            id = gameDef.id,
+                            name = gameDef.defaultName,
+                            packageName = gameDef.candidatePackages.first(),
+                            recommendedFps = gameDef.recommendedFps,
+                            maxSupportedFps = gameDef.maxSupportedFps,
+                            recommendationReason = gameDef.recommendationReason,
+                            isInstalled = false
+                        )
+                    }
+                }
+
+                val sortedApps = resolvedApps.sortedByDescending { it.isInstalled }
+                _availableApps.value = sortedApps
+
+                // If currently selected app matches one of the resolved apps, update it
+                val currentPkg = _selectedApp.value.packageName
+                val matched = sortedApps.find { it.packageName == currentPkg || it.id == _selectedApp.value.id }
+                if (matched != null) {
+                    _selectedApp.value = matched
+                } else if (sortedApps.isNotEmpty()) {
+                    _selectedApp.value = sortedApps.first()
+                }
             } catch (_: Exception) {}
         }
     }

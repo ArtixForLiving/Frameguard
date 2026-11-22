@@ -52,6 +52,7 @@ import com.optimizer.game.ui.theme.HairlineBorder
 import com.optimizer.game.ui.theme.NominalGreen
 import com.optimizer.game.ui.theme.ObsidianSurface
 import com.optimizer.game.ui.theme.ProgressTrack
+import com.optimizer.game.ui.theme.SignalAmber
 import com.optimizer.game.ui.theme.SignalRed
 import com.optimizer.game.ui.theme.ZincMuted
 import com.optimizer.game.viewmodel.MainViewModel
@@ -228,18 +229,26 @@ fun MainScreen(viewModel: MainViewModel) {
                     selectedFps = targetFps,
                     onFpsSelected = { fps -> viewModel.onSelectFps(fps) },
                     recommendedFps = selectedApp.recommendedFps,
+                    maxSupportedFps = selectedApp.maxSupportedFps,
                     enabled = isConnected
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // SMART PRESET ADAPTIVE BANNER
+                val isAboveCap = targetFps > selectedApp.maxSupportedFps
+                val isOptimal = targetFps == selectedApp.recommendedFps
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(4.dp))
                         .background(ObsidianSurface)
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(4.dp))
+                        .border(
+                            1.dp,
+                            if (isAboveCap) SignalAmber.copy(alpha = 0.7f) else HairlineBorder,
+                            RoundedCornerShape(4.dp)
+                        )
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -248,35 +257,65 @@ fun MainScreen(viewModel: MainViewModel) {
                         modifier = Modifier
                             .size(6.dp)
                             .clip(CircleShape)
-                            .background(AccentPurple)
+                            .background(if (isAboveCap) SignalAmber else AccentPurple)
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "SMART PRESET",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = AccentPurple,
-                                letterSpacing = 1.sp
-                            )
-                            Text(
-                                text = "· REC ${selectedApp.recommendedFps} FPS",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = BoneWhite
-                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isAboveCap) "ENGINE CAP EXCEEDED" else if (isOptimal) "SMART PRESET ACTIVE" else "MANUAL CADENCE",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isAboveCap) SignalAmber else AccentPurple,
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    text = if (isAboveCap) "· MAX ${selectedApp.maxSupportedFps} FPS" else "· REC ${selectedApp.recommendedFps} FPS",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BoneWhite
+                                )
+                            }
+                            if (isAboveCap || !isOptimal) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(AccentPurple.copy(alpha = 0.15f))
+                                        .border(1.dp, AccentPurple.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
+                                        .clickable {
+                                            viewModel.onSelectFps(selectedApp.recommendedFps)
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "RESTORE ${selectedApp.recommendedFps} FPS",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentPurple
+                                    )
+                                }
+                            }
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = selectedApp.recommendationReason,
+                            text = if (isAboveCap) {
+                                "${selectedApp.name} engine renders at ${selectedApp.maxSupportedFps} FPS max. Selecting ${targetFps}Hz will not increase FPS, but wastes battery & induces frame jitter."
+                            } else {
+                                selectedApp.recommendationReason
+                            },
                             fontFamily = FontFamily.Monospace,
                             fontSize = 10.sp,
-                            color = ZincMuted,
+                            color = if (isAboveCap) BoneWhite.copy(alpha = 0.85f) else ZincMuted,
                             lineHeight = 14.sp
                         )
                     }
