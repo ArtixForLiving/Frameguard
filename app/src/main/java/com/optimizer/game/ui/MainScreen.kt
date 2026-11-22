@@ -238,7 +238,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 val isAboveCap = targetFps > selectedApp.maxSupportedFps
                 val isOptimal = targetFps == selectedApp.recommendedFps
 
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(4.dp))
@@ -249,76 +249,70 @@ fun MainScreen(viewModel: MainViewModel) {
                             shape = RoundedCornerShape(4.dp)
                         )
                         .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .size(5.dp)
-                            .clip(CircleShape)
-                            .background(AccentPurple)
-                    )
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = if (isAboveCap) "ENGINE CAP REACHED" else if (isOptimal) "SMART PRESET" else "MANUAL CADENCE",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = AccentPurple,
-                                    letterSpacing = 1.sp
-                                )
-                                Text(
-                                    text = if (isAboveCap) "· MAX ${selectedApp.maxSupportedFps} FPS" else "· REC ${selectedApp.recommendedFps} FPS",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = BoneWhite
-                                )
-                            }
-                            if (isAboveCap || !isOptimal) {
-                                Text(
-                                    text = "[ RESTORE ${selectedApp.recommendedFps} ]",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.5.sp,
-                                    color = AccentPurple,
-                                    modifier = Modifier
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null
-                                        ) {
-                                            viewModel.onSelectFps(selectedApp.recommendedFps)
-                                        }
-                                )
-                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(5.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentPurple)
+                            )
+                            Text(
+                                text = if (isAboveCap) "ENGINE CAP REACHED" else if (isOptimal) "SMART PRESET" else "MANUAL CADENCE",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentPurple,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = if (isAboveCap) "· MAX ${selectedApp.maxSupportedFps} FPS" else "· REC ${selectedApp.recommendedFps} FPS",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BoneWhite
+                            )
                         }
-                        Text(
-                            text = if (isAboveCap) {
-                                "${selectedApp.name} engine renders at ${selectedApp.maxSupportedFps} FPS max. Selecting ${targetFps}Hz will not increase framerate and introduces micro-stutter."
-                            } else {
-                                selectedApp.recommendationReason
-                            },
-                            fontFamily = FontFamily.SansSerif,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Normal,
-                            color = ZincMuted,
-                            lineHeight = 15.sp
-                        )
+                        if (isAboveCap || !isOptimal) {
+                            Text(
+                                text = "[ RESTORE ${selectedApp.recommendedFps} ]",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp,
+                                color = AccentPurple,
+                                modifier = Modifier
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {
+                                        viewModel.onSelectFps(selectedApp.recommendedFps)
+                                    }
+                            )
+                        }
                     }
+                    Text(
+                        text = if (isAboveCap) {
+                            "${selectedApp.name} engine renders at ${selectedApp.maxSupportedFps} FPS max. Selecting ${targetFps}Hz will not increase framerate and introduces micro-stutter."
+                        } else {
+                            selectedApp.recommendationReason
+                        },
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = ZincMuted,
+                        lineHeight = 15.sp,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
                 }
             }
 
