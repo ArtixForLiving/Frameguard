@@ -21,6 +21,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val shizukuState: StateFlow<ShizukuState> = ShizukuManager.state
     val isBoostActive: StateFlow<Boolean> = BoostSessionService.isBoostActive
+    val pairedRefreshRate: StateFlow<String> = GameOptimizerEngine.pairedRefreshRate
 
     private val defaultPresets = listOf(
         GameAppItem("warframe", "Warframe Mobile", "com.digitalextremes.warframemobile"),
@@ -164,9 +165,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         GameOptimizerEngine.setTargetFps(fps)
         if (isBoostActive.value && shizukuState.value == ShizukuState.CONNECTED) {
             viewModelScope.launch {
-                val cmd = "cmd game set --mode 2 --fps $fps ${_selectedApp.value.packageName}"
+                val pkg = _selectedApp.value.packageName
+                var effectiveFps = fps
+                val optimalHz = when (fps) {
+                    30 -> "60.0"
+                    40 -> "120.0"
+                    45 -> {
+                        val supports90 = GameOptimizerEngine.isRefreshRateSupported(90, getApplication())
+                        if (supports90) {
+                            "90.0"
+                        } else {
+                            GameOptimizerEngine.log("Display hardware does not support 90Hz. Auto-fallback to 40 FPS @ 120Hz.", GameOptimizerEngine.LogType.INFO)
+                            effectiveFps = 40
+                            "120.0"
+                        }
+                    }
+                    60 -> "60.0"
+                    else -> "60.0"
+                }
+
+                _targetFps.value = effectiveFps
+
+                // Enforce game_overlay intervention rule
+                val overlayCmd = "device_config put game_overlay $pkg mode=2,fps=$effectiveFps:mode=3,fps=$effectiveFps"
+                GameOptimizerEngine.log(overlayCmd, GameOptimizerEngine.LogType.COMMAND)
+                ShizukuManager.exec(overlayCmd)
+
+                // Set game mode & fps
+                val cmd = "cmd game set --mode 2 --fps $effectiveFps $pkg"
                 GameOptimizerEngine.log(cmd, GameOptimizerEngine.LogType.COMMAND)
                 ShizukuManager.exec(cmd)
+
+                // Set refresh rate
+                val peakCmd = "settings put system peak_refresh_rate $optimalHz"
+                val minCmd = "settings put system min_refresh_rate $optimalHz"
+                ShizukuManager.exec(peakCmd)
+                ShizukuManager.exec(minCmd)
+
+                val pairedLabel = "${optimalHz.substringBefore(".")}Hz"
+                GameOptimizerEngine.setPairedHz(pairedLabel)
             }
         }
     }

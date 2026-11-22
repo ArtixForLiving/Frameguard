@@ -5,11 +5,12 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
 import com.optimizer.game.shizuku.ShizukuManager
 import com.optimizer.game.ui.MainScreen
 import com.optimizer.game.ui.theme.FrameGuardTheme
@@ -27,8 +28,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Utilitarian dark status/nav bar configuration
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        // Edge-to-edge transparent system bars with dark icons/content
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
 
         ShizukuManager.init()
 

@@ -93,7 +93,7 @@ class BoostSessionService : Service() {
                 _isBoostActive.value = true
 
                 serviceScope.launch {
-                    GameOptimizerEngine.applyProfile(pkg, fps, doze)
+                    GameOptimizerEngine.applyProfile(pkg, fps, doze, applicationContext)
                 }
             }
 
