@@ -73,6 +73,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val thermalValue by viewModel.thermalValue.collectAsState()
     val thermalSubText by viewModel.thermalSubText.collectAsState()
     val pairedRefreshRate by viewModel.pairedRefreshRate.collectAsState()
+    val currentDisplayHz by viewModel.currentDisplayHz.collectAsState()
     val logs by viewModel.logs.collectAsState()
 
     val isConnected = shizukuState == ShizukuState.CONNECTED
@@ -178,7 +179,7 @@ fun MainScreen(viewModel: MainViewModel) {
             TelemetryGrid(
                 thermalText = thermalValue,
                 thermalSubText = thermalSubText,
-                displayText = if (isBoostActive) pairedRefreshRate else "120Hz",
+                displayText = if (isBoostActive) pairedRefreshRate else currentDisplayHz,
                 displaySubText = if (isBoostActive) "LOCKED" else "NATIVE",
                 profileText = if (isBoostActive) "CAP $targetFps" else "IDLE",
                 profileSubText = if (isBoostActive) "ACTIVE" else "STANDBY"

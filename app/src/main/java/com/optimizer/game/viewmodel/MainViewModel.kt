@@ -3,6 +3,8 @@ package com.optimizer.game.viewmodel
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.hardware.display.DisplayManager
+import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.optimizer.game.optimizer.GameOptimizerEngine
@@ -22,6 +24,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val shizukuState: StateFlow<ShizukuState> = ShizukuManager.state
     val isBoostActive: StateFlow<Boolean> = BoostSessionService.isBoostActive
     val pairedRefreshRate: StateFlow<String> = GameOptimizerEngine.pairedRefreshRate
+
+    private val _currentDisplayHz = MutableStateFlow("120Hz")
+    val currentDisplayHz: StateFlow<String> = _currentDisplayHz.asStateFlow()
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == Display.DEFAULT_DISPLAY) {
+                queryCurrentRefreshRate()
+            }
+        }
+    }
 
     private val defaultPresets = listOf(
         GameAppItem("warframe", "Warframe Mobile", "com.digitalextremes.warframemobile"),
@@ -92,6 +107,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         loadInstalledGames()
+
+        val dm = application.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        dm?.registerDisplayListener(displayListener, null)
+        queryCurrentRefreshRate()
+    }
+
+    private fun queryCurrentRefreshRate() {
+        val dm = getApplication<Application>().getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
+        val rate = display?.mode?.refreshRate?.let { Math.round(it) } ?: 120
+        _currentDisplayHz.value = "${rate}Hz"
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        val dm = getApplication<Application>().getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        dm?.unregisterDisplayListener(displayListener)
     }
 
     private fun loadInstalledGames() {
