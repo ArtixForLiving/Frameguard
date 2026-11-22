@@ -227,8 +227,60 @@ fun MainScreen(viewModel: MainViewModel) {
                 FpsSegmentedControl(
                     selectedFps = targetFps,
                     onFpsSelected = { fps -> viewModel.onSelectFps(fps) },
+                    recommendedFps = selectedApp.recommendedFps,
                     enabled = isConnected
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // SMART PRESET ADAPTIVE BANNER
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(ObsidianSurface)
+                        .border(1.dp, HairlineBorder, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(AccentPurple)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "SMART PRESET",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentPurple,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "· REC ${selectedApp.recommendedFps} FPS",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BoneWhite
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = selectedApp.recommendationReason,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = ZincMuted,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
             }
 
             // Hairline Divider

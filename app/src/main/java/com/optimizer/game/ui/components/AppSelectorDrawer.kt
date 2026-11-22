@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.optimizer.game.ui.theme.AccentPurple
 import com.optimizer.game.ui.theme.BoneWhite
 import com.optimizer.game.ui.theme.CanvasDark
 import com.optimizer.game.ui.theme.HairlineBorder
@@ -38,8 +40,86 @@ import com.optimizer.game.ui.theme.ZincMuted
 data class GameAppItem(
     val id: String,
     val name: String,
-    val packageName: String
-)
+    val packageName: String,
+    val recommendedFps: Int = 60,
+    val maxSupportedFps: Int = 60,
+    val recommendationReason: String = "Engine native cap 60 FPS · 60Hz lock eliminates wasted GPU cycles"
+) {
+    companion object {
+        fun createWithPreset(id: String, name: String, packageName: String): GameAppItem {
+            val (recFps, maxFps, reason) = when {
+                packageName.contains("warframemobile", ignoreCase = true) -> Triple(
+                    90,
+                    120,
+                    "Supports high-RR · 90Hz lock delivers smooth 90 FPS with balanced thermals"
+                )
+                packageName.contains("genshin", ignoreCase = true) -> Triple(
+                    60,
+                    60,
+                    "Engine hard-capped at 60 FPS · 60Hz lock prevents thermal throttling"
+                )
+                packageName.contains("hkrpg", ignoreCase = true) || packageName.contains("starrail", ignoreCase = true) -> Triple(
+                    60,
+                    60,
+                    "Engine hard-capped at 60 FPS · 60Hz lock delivers 1:1 flat VSync"
+                )
+                packageName.contains("wutheringwaves", ignoreCase = true) || packageName.contains("kurogame", ignoreCase = true) -> Triple(
+                    60,
+                    60,
+                    "Heavy GPU shader load · 60Hz lock recommended for sustained stability"
+                )
+                packageName.contains("warzone", ignoreCase = true) || packageName.contains("callofduty", ignoreCase = true) -> Triple(
+                    60,
+                    90,
+                    "High thermal load · 60Hz lock avoids severe thermal throttling"
+                )
+                packageName.contains("pubg", ignoreCase = true) || packageName.contains("tencent.ig", ignoreCase = true) -> Triple(
+                    90,
+                    120,
+                    "Supports high-RR · 90Hz lock provides stable competitive latency"
+                )
+                packageName.contains("mobile.legends", ignoreCase = true) -> Triple(
+                    90,
+                    120,
+                    "Supports high-RR · 90Hz lock recommended for ultra-low touch latency"
+                )
+                packageName.contains("freefire", ignoreCase = true) -> Triple(
+                    90,
+                    90,
+                    "Supports 90 FPS · 90Hz lock delivers fluid reaction timing"
+                )
+                packageName.contains("minecraft", ignoreCase = true) -> Triple(
+                    90,
+                    120,
+                    "Supports high-RR · 90Hz lock balances chunk rendering & battery"
+                )
+                packageName.contains("roblox", ignoreCase = true) -> Triple(
+                    60,
+                    60,
+                    "Engine capped at 60 FPS · 60Hz lock saves power & reduces heat"
+                )
+                packageName.contains("terraria", ignoreCase = true) -> Triple(
+                    60,
+                    60,
+                    "Pixel engine capped at 60 FPS · 60Hz lock preserves exact frame pacing"
+                )
+                else -> Triple(
+                    60,
+                    60,
+                    "Safe baseline · 60Hz lock stabilizes frame pacing & limits thermals"
+                )
+            }
+            return GameAppItem(
+                id = id,
+                name = name,
+                packageName = packageName,
+                recommendedFps = recFps,
+                maxSupportedFps = maxFps,
+                recommendationReason = reason
+            )
+        }
+    }
+}
 
 /**
  * Utilitarian target game selector with inline mechanical accordion drawer.
@@ -161,15 +241,35 @@ fun AppSelectorDrawer(
                                 .weight(1f)
                                 .padding(end = 12.dp)
                         ) {
-                            Text(
-                                text = app.name,
-                                fontFamily = FontFamily.SansSerif,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isActive) BoneWhite else ZincMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = app.name,
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isActive) BoneWhite else ZincMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(CanvasDark)
+                                        .border(1.dp, HairlineBorder, RoundedCornerShape(2.dp))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "${app.recommendedFps} FPS",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 8.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isActive) AccentPurple else ZincMuted
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = app.packageName,

@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.optimizer.game.ui.theme.AccentPurple
 import com.optimizer.game.ui.theme.BoneWhite
 import com.optimizer.game.ui.theme.CanvasDark
 import com.optimizer.game.ui.theme.HairlineBorder
@@ -31,7 +36,7 @@ import com.optimizer.game.ui.theme.ObsidianSurface
 import com.optimizer.game.ui.theme.ZincMuted
 
 /**
- * Mechanical segmented bar for selecting target frame pacing cap (30, 40, 45, 60 FPS).
+ * Mechanical segmented bar for selecting target frame pacing cap (60, 90, 120 FPS).
  */
 @Composable
 fun FpsSegmentedControl(
@@ -39,6 +44,7 @@ fun FpsSegmentedControl(
     onFpsSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    recommendedFps: Int = 60,
     options: List<Int> = listOf(60, 90, 120)
 ) {
     Row(
@@ -68,14 +74,28 @@ fun FpsSegmentedControl(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = fps.toString(),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    color = if (isSelected) CanvasDark else ZincMuted,
-                    textAlign = TextAlign.Center
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = fps.toString(),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        color = if (isSelected) CanvasDark else ZincMuted,
+                        textAlign = TextAlign.Center
+                    )
+                    if (fps == recommendedFps) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(if (isSelected) AccentPurple else AccentPurple)
+                        )
+                    }
+                }
             }
 
             if (index < options.lastIndex) {

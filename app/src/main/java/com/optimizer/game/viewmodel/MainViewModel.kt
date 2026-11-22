@@ -39,11 +39,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val defaultPresets = listOf(
-        GameAppItem("warframe", "Warframe Mobile", "com.digitalextremes.warframemobile"),
-        GameAppItem("wuwa", "Wuthering Waves", "com.kurogame.wutheringwaves.global"),
-        GameAppItem("genshin", "Genshin Impact", "com.miHoYo.GenshinImpact"),
-        GameAppItem("hsr", "Honkai: Star Rail", "com.HoYoverse.hkrpgoversea"),
-        GameAppItem("codm", "Call of Duty: Warzone", "com.activision.callofduty.warzone")
+        GameAppItem.createWithPreset("warframe", "Warframe Mobile", "com.digitalextremes.warframemobile"),
+        GameAppItem.createWithPreset("wuwa", "Wuthering Waves", "com.kurogame.wutheringwaves.global"),
+        GameAppItem.createWithPreset("genshin", "Genshin Impact", "com.miHoYo.GenshinImpact"),
+        GameAppItem.createWithPreset("hsr", "Honkai: Star Rail", "com.HoYoverse.hkrpgoversea"),
+        GameAppItem.createWithPreset("codm", "Call of Duty: Warzone", "com.activision.callofduty.warzone")
     )
 
     private val _selectedApp = MutableStateFlow(defaultPresets[0])
@@ -138,7 +138,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val installed = resolveInfos.mapNotNull {
                     val pkg = it.activityInfo?.packageName ?: return@mapNotNull null
                     val name = it.loadLabel(pm).toString()
-                    GameAppItem(id = pkg, name = name, packageName = pkg)
+                    GameAppItem.createWithPreset(id = pkg, name = name, packageName = pkg)
                 }
 
                 val merged = (defaultPresets + installed).distinctBy { it.packageName }
@@ -183,8 +183,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isAppDrawerOpen.value = false
         _compileDone.value = false
         GameOptimizerEngine.setTargetPackage(app.packageName)
+
+        // Smart Preset: Automatically adapt target FPS to game's recommended tier
+        _targetFps.value = app.recommendedFps
+        GameOptimizerEngine.setTargetFps(app.recommendedFps)
+
         viewModelScope.launch {
             GameOptimizerEngine.log("target set -> ${app.packageName}", GameOptimizerEngine.LogType.STDOUT)
+            GameOptimizerEngine.log("smart preset applied: ${app.recommendedFps} FPS (${app.recommendationReason})", GameOptimizerEngine.LogType.INFO)
         }
     }
 
