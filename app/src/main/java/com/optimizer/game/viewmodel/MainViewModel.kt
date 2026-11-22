@@ -40,7 +40,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isAppDrawerOpen = MutableStateFlow(false)
     val isAppDrawerOpen: StateFlow<Boolean> = _isAppDrawerOpen.asStateFlow()
 
-    private val _targetFps = MutableStateFlow(45)
+    private val _targetFps = MutableStateFlow(90)
     val targetFps: StateFlow<Int> = _targetFps.asStateFlow()
 
     private val _isDozeEnabled = MutableStateFlow(true)
@@ -168,33 +168,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val pkg = _selectedApp.value.packageName
                 var effectiveFps = fps
                 val optimalHz = when (fps) {
+                    60 -> "60.0"
+                    90 -> {
+                        val supports90 = GameOptimizerEngine.isRefreshRateSupported(90, getApplication())
+                        if (supports90) "90.0" else "60.0"
+                    }
+                    120 -> "120.0"
                     30 -> "60.0"
                     40 -> "120.0"
-                    45 -> {
-                        val supports90 = GameOptimizerEngine.isRefreshRateSupported(90, getApplication())
-                        if (supports90) {
-                            "90.0"
-                        } else {
-                            GameOptimizerEngine.log("Display hardware does not support 90Hz. Auto-fallback to 40 FPS @ 120Hz.", GameOptimizerEngine.LogType.INFO)
-                            effectiveFps = 40
-                            "120.0"
-                        }
-                    }
-                    60 -> "60.0"
-                    else -> "60.0"
+                    45 -> "90.0"
+                    else -> "90.0"
                 }
 
                 _targetFps.value = effectiveFps
 
-                // Enforce game_overlay intervention rule
-                val overlayCmd = "device_config put game_overlay $pkg mode=2,fps=$effectiveFps:mode=3,fps=$effectiveFps"
-                GameOptimizerEngine.log(overlayCmd, GameOptimizerEngine.LogType.COMMAND)
-                ShizukuManager.exec(overlayCmd)
+                // Set custom mode intervention config and activate Custom Game Mode
+                val gameSetCmd = "cmd game set --fps $effectiveFps $pkg"
+                GameOptimizerEngine.log(gameSetCmd, GameOptimizerEngine.LogType.COMMAND)
+                ShizukuManager.exec(gameSetCmd)
 
-                // Set game mode & fps
-                val cmd = "cmd game set --mode 2 --fps $effectiveFps $pkg"
-                GameOptimizerEngine.log(cmd, GameOptimizerEngine.LogType.COMMAND)
-                ShizukuManager.exec(cmd)
+                val gameModeCmd = "cmd game mode custom $pkg"
+                GameOptimizerEngine.log(gameModeCmd, GameOptimizerEngine.LogType.COMMAND)
+                ShizukuManager.exec(gameModeCmd)
 
                 // Set refresh rate
                 val peakCmd = "settings put system peak_refresh_rate $optimalHz"

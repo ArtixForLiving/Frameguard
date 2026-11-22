@@ -39,7 +39,7 @@ fun FpsSegmentedControl(
     onFpsSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    options: List<Int> = listOf(30, 40, 45, 60)
+    options: List<Int> = listOf(60, 90, 120)
 ) {
     Row(
         modifier = modifier

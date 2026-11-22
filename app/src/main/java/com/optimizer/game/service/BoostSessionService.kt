@@ -75,7 +75,7 @@ class BoostSessionService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: GameOptimizerEngine.DEFAULT_PACKAGE
-                val fps = intent.getIntExtra(EXTRA_TARGET_FPS, 45)
+                val fps = intent.getIntExtra(EXTRA_TARGET_FPS, 90)
                 val doze = intent.getBooleanExtra(EXTRA_DOZE_ENABLED, true)
 
                 val notification = buildNotification(pkg, fps, doze)

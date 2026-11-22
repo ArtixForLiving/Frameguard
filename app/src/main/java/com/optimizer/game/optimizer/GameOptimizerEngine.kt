@@ -143,23 +143,19 @@ object GameOptimizerEngine {
         val stopOut = ShizukuManager.exec(stopCmd)
         if (stopOut.isNotBlank()) log(stopOut, LogType.STDOUT)
 
-        // 2. Pair display refresh rate as an exact integer multiple of targetFps
+        // 2. Lock display refresh rate directly to match requested FPS hardware tier
         var effectiveFps = targetFps
         val optimalHz = when (targetFps) {
-            30 -> "60.0"  // 60 / 2 = 30
-            40 -> "120.0" // 120 / 3 = 40
-            45 -> {
+            60 -> "60.0"
+            90 -> {
                 val has90Hz = isRefreshRateSupported(90, context)
-                if (has90Hz) {
-                    "90.0" // 90 / 2 = 45
-                } else {
-                    log("Display hardware does not support 90Hz. Auto-fallback to 40 FPS @ 120Hz.", LogType.INFO)
-                    effectiveFps = 40
-                    "120.0" // 120 / 3 = 40
-                }
+                if (has90Hz) "90.0" else "60.0"
             }
-            60 -> "60.0"  // 60 / 1 = 60
-            else -> "60.0"
+            120 -> "120.0"
+            30 -> "60.0"
+            40 -> "120.0"
+            45 -> "90.0"
+            else -> "90.0"
         }
         currentFps = effectiveFps
         val pairedLabel = "${optimalHz.substringBefore(".")}Hz"
@@ -176,14 +172,13 @@ object GameOptimizerEngine {
             log("Cached display refresh rates: peak=$cachedPeakRefreshRate min=$cachedMinRefreshRate", LogType.INFO)
         }
 
-        // 4. Enforce game_overlay intervention rule before launch
-        val overlayCmd = "device_config put game_overlay $packageName mode=2,fps=$effectiveFps:mode=3,fps=$effectiveFps"
-        log(overlayCmd, LogType.COMMAND)
-        val overlayOut = ShizukuManager.exec(overlayCmd)
-        if (overlayOut.isNotBlank()) log(overlayOut, LogType.STDOUT)
+        // 4. Set custom mode intervention config and activate Custom Game Mode
+        val gameSetCmd = "cmd game set --fps $effectiveFps $packageName"
+        log(gameSetCmd, LogType.COMMAND)
+        val gameSetOut = ShizukuManager.exec(gameSetCmd)
+        if (gameSetOut.isNotBlank()) log(gameSetOut, LogType.STDOUT)
 
-        // 5. Set Game Mode and FPS cap via GameManagerService
-        val gameModeCmd = "cmd game set --mode 2 --fps $effectiveFps $packageName"
+        val gameModeCmd = "cmd game mode custom $packageName"
         log(gameModeCmd, LogType.COMMAND)
         val gameModeOut = ShizukuManager.exec(gameModeCmd)
         if (gameModeOut.isNotBlank()) log(gameModeOut, LogType.STDOUT)
@@ -224,14 +219,13 @@ object GameOptimizerEngine {
         val unforceOut = ShizukuManager.exec(unforceCmd)
         if (unforceOut.isNotBlank()) log(unforceOut, LogType.STDOUT)
 
-        // 2. Delete game_overlay intervention rule
-        val deleteOverlayCmd = "device_config delete game_overlay $packageName"
-        log(deleteOverlayCmd, LogType.COMMAND)
-        val deleteOverlayOut = ShizukuManager.exec(deleteOverlayCmd)
-        if (deleteOverlayOut.isNotBlank()) log(deleteOverlayOut, LogType.STDOUT)
+        // 2. Reset custom game mode interventions and restore STANDARD (1) mode
+        val resetInterventionCmd = "cmd game reset $packageName"
+        log(resetInterventionCmd, LogType.COMMAND)
+        val resetInterventionOut = ShizukuManager.exec(resetInterventionCmd)
+        if (resetInterventionOut.isNotBlank()) log(resetInterventionOut, LogType.STDOUT)
 
-        // 3. Reset Game Mode to STANDARD (1)
-        val resetGameCmd = "cmd game mode 1 $packageName"
+        val resetGameCmd = "cmd game mode standard $packageName"
         log(resetGameCmd, LogType.COMMAND)
         val resetOut = ShizukuManager.exec(resetGameCmd)
         if (resetOut.isNotBlank()) log(resetOut, LogType.STDOUT)
