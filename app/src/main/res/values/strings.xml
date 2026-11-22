@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">FrameGuard</string>
+    <string name="notification_channel_name">FrameGuard Boost Service</string>
+    <string name="notification_channel_description">Persistent status indicator for active game optimization profile</string>
+</resources>
