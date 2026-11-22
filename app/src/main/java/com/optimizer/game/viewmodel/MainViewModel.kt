@@ -92,6 +92,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 recommendedFps = 90,
                 maxSupportedFps = 120,
                 recommendationReason = "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes"
+            ),
+            SupportedGameDef(
+                id = "mlbb",
+                defaultName = "Mobile Legends: Bang Bang",
+                candidatePackages = listOf("com.mobile.legends", "com.vng.mlbbvn", "com.mobilelegends.hwag", "com.mobilelegends.mi"),
+                recommendedFps = 90,
+                maxSupportedFps = 120,
+                recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for low touch latency & thermals"
+            ),
+            SupportedGameDef(
+                id = "pubgflash",
+                defaultName = "PUBG Mobile Flash",
+                candidatePackages = listOf("com.tencent.igfit"),
+                recommendedFps = 60,
+                maxSupportedFps = 60,
+                recommendationReason = "Lightweight client capped at 60 FPS · 60Hz lock provides flat 16.6ms frametime"
             )
         )
     }

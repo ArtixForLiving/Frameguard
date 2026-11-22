@@ -70,6 +70,16 @@ data class GameAppItem(
                     60,
                     "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability"
                 )
+                packageName.contains("igfit", ignoreCase = true) -> Triple(
+                    60,
+                    60,
+                    "Lightweight client capped at 60 FPS · 60Hz lock provides flat 16.6ms frametime"
+                )
+                packageName.contains("mobile.legends", ignoreCase = true) || packageName.contains("mobilelegends", ignoreCase = true) -> Triple(
+                    90,
+                    120,
+                    "Supports up to 120 FPS · 90Hz lock recommended for low touch latency & thermals"
+                )
                 packageName.contains("pubg", ignoreCase = true) || packageName.contains("tencent.ig", ignoreCase = true) -> Triple(
                     90,
                     120,
