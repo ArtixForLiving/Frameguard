@@ -3,7 +3,9 @@ package com.optimizer.game.viewmodel
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.display.DisplayManager
+import android.os.BatteryManager
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,11 +14,13 @@ import com.optimizer.game.service.BoostSessionService
 import com.optimizer.game.shizuku.ShizukuManager
 import com.optimizer.game.shizuku.ShizukuState
 import com.optimizer.game.ui.components.GameAppItem
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -128,10 +132,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _compileDone = MutableStateFlow(false)
     val compileDone: StateFlow<Boolean> = _compileDone.asStateFlow()
 
-    private val _thermalValue = MutableStateFlow("41.8°C")
+    private val _thermalValue = MutableStateFlow(getInitialBatteryThermal())
     val thermalValue: StateFlow<String> = _thermalValue.asStateFlow()
 
-    private val _thermalSubText = MutableStateFlow("SOC IDLE")
+    private val _thermalSubText = MutableStateFlow("SOC NOMINAL")
     val thermalSubText: StateFlow<String> = _thermalSubText.asStateFlow()
 
     private val _logs = MutableStateFlow<List<GameOptimizerEngine.ShellLogEntry>>(emptyList())
@@ -151,16 +155,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             GameOptimizerEngine.log("soc: mt6897 / dimensity 8350 · 12gb ram", GameOptimizerEngine.LogType.INFO)
         }
 
-        // Observe boost state changes to adjust telemetry
+        // Live hardware thermal polling loop
+        viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                updateHardwareThermal()
+                delay(2500)
+            }
+        }
+
+        // Observe boost state changes to refresh telemetry
         viewModelScope.launch {
-            isBoostActive.collect { active ->
-                if (active) {
-                    _thermalSubText.value = "STABILIZED"
-                    animateThermal(36.2f)
-                } else {
-                    _thermalSubText.value = "SOC IDLE"
-                    animateThermal(41.8f)
-                }
+            isBoostActive.collect { _ ->
+                updateHardwareThermal()
             }
         }
 
@@ -242,18 +248,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun animateThermal(target: Float) {
-        viewModelScope.launch {
-            val currentVal = _thermalValue.value.removeSuffix("°C").toFloatOrNull() ?: 41.8f
-            val steps = 10
-            val stepDiff = (target - currentVal) / steps
-            var v = currentVal
-            repeat(steps) {
-                v += stepDiff
-                _thermalValue.value = String.format("%.1f°C", v)
-                delay(80)
+    private fun getInitialBatteryThermal(): String {
+        return try {
+            val intent = getApplication<Application>().registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val raw = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+            if (raw > 0) String.format(Locale.US, "%.1f°C", raw / 10.0f) else "38.0°C"
+        } catch (_: Exception) {
+            "38.0°C"
+        }
+    }
+
+    private fun extractHalThermal(dump: String): Float? {
+        val halSection = dump.substringAfter("Current temperatures from HAL:", "")
+        if (halSection.isEmpty()) return null
+
+        val socRegex = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=SOC""")
+        val socMatch = socRegex.find(halSection)
+        if (socMatch != null) {
+            return socMatch.groupValues[1].toFloatOrNull()
+        }
+
+        val cpuRegex = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=CPU""")
+        val cpuMatch = cpuRegex.find(halSection)
+        if (cpuMatch != null) {
+            return cpuMatch.groupValues[1].toFloatOrNull()
+        }
+
+        val batRegex = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=BATTERY""")
+        val batMatch = batRegex.find(halSection)
+        if (batMatch != null) {
+            return batMatch.groupValues[1].toFloatOrNull()
+        }
+
+        return null
+    }
+
+    private fun readBatteryThermal(): Float? {
+        return try {
+            val intent = getApplication<Application>().registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val raw = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+            if (raw > 0) raw / 10.0f else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun updateHardwareThermal() {
+        var temp: Float? = null
+        var sensorSource = "SOC"
+
+        if (shizukuState.value == ShizukuState.CONNECTED) {
+            try {
+                val dump = ShizukuManager.exec("dumpsys thermalservice")
+                temp = extractHalThermal(dump)
+            } catch (_: Exception) {}
+        }
+
+        if (temp == null) {
+            temp = readBatteryThermal()
+            sensorSource = "BATT"
+        }
+
+        if (temp != null && temp > 0f) {
+            _thermalValue.value = String.format(Locale.US, "%.1f°C", temp)
+
+            val isBoost = isBoostActive.value
+            _thermalSubText.value = when {
+                isBoost -> when {
+                    temp < 40f -> "STABILIZED"
+                    temp < 45f -> "ACTIVE · BOOST"
+                    else -> "WARM · BOOST"
+                }
+                sensorSource == "SOC" -> when {
+                    temp < 38f -> "SOC COOL"
+                    temp < 42f -> "SOC NOMINAL"
+                    temp < 46f -> "SOC WARM"
+                    else -> "SOC ELEVATED"
+                }
+                else -> "BATT SENSOR"
             }
-            _thermalValue.value = String.format("%.1f°C", target)
         }
     }
 
