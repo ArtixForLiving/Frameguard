@@ -52,7 +52,6 @@ import com.optimizer.game.ui.theme.HairlineBorder
 import com.optimizer.game.ui.theme.NominalGreen
 import com.optimizer.game.ui.theme.ObsidianSurface
 import com.optimizer.game.ui.theme.ProgressTrack
-import com.optimizer.game.ui.theme.SignalAmber
 import com.optimizer.game.ui.theme.SignalRed
 import com.optimizer.game.ui.theme.ZincMuted
 import com.optimizer.game.viewmodel.MainViewModel
@@ -245,21 +244,25 @@ fun MainScreen(viewModel: MainViewModel) {
                         .clip(RoundedCornerShape(4.dp))
                         .background(ObsidianSurface)
                         .border(
-                            1.dp,
-                            if (isAboveCap) SignalAmber.copy(alpha = 0.7f) else HairlineBorder,
-                            RoundedCornerShape(4.dp)
+                            width = 1.dp,
+                            color = if (isAboveCap) AccentPurple.copy(alpha = 0.45f) else HairlineBorder,
+                            shape = RoundedCornerShape(4.dp)
                         )
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(6.dp)
+                            .padding(top = 4.dp)
+                            .size(5.dp)
                             .clip(CircleShape)
-                            .background(if (isAboveCap) SignalAmber else AccentPurple)
+                            .background(AccentPurple)
                     )
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -270,11 +273,11 @@ fun MainScreen(viewModel: MainViewModel) {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = if (isAboveCap) "ENGINE CAP EXCEEDED" else if (isOptimal) "SMART PRESET ACTIVE" else "MANUAL CADENCE",
+                                    text = if (isAboveCap) "ENGINE CAP REACHED" else if (isOptimal) "SMART PRESET" else "MANUAL CADENCE",
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isAboveCap) SignalAmber else AccentPurple,
+                                    color = AccentPurple,
                                     letterSpacing = 1.sp
                                 )
                                 Text(
@@ -286,37 +289,34 @@ fun MainScreen(viewModel: MainViewModel) {
                                 )
                             }
                             if (isAboveCap || !isOptimal) {
-                                Box(
+                                Text(
+                                    text = "[ RESTORE ${selectedApp.recommendedFps} ]",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.5.sp,
+                                    color = AccentPurple,
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(AccentPurple.copy(alpha = 0.15f))
-                                        .border(1.dp, AccentPurple.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
-                                        .clickable {
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
                                             viewModel.onSelectFps(selectedApp.recommendedFps)
                                         }
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = "RESTORE ${selectedApp.recommendedFps} FPS",
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = AccentPurple
-                                    )
-                                }
+                                )
                             }
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = if (isAboveCap) {
-                                "${selectedApp.name} engine renders at ${selectedApp.maxSupportedFps} FPS max. Selecting ${targetFps}Hz will not increase FPS, but wastes battery & induces frame jitter."
+                                "${selectedApp.name} engine renders at ${selectedApp.maxSupportedFps} FPS max. Selecting ${targetFps}Hz will not increase framerate and introduces micro-stutter."
                             } else {
                                 selectedApp.recommendationReason
                             },
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 10.sp,
-                            color = if (isAboveCap) BoneWhite.copy(alpha = 0.85f) else ZincMuted,
-                            lineHeight = 14.sp
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = ZincMuted,
+                            lineHeight = 15.sp
                         )
                     }
                 }
