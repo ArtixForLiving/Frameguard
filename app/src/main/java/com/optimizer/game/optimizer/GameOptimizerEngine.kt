@@ -134,9 +134,9 @@ object GameOptimizerEngine {
         onProgress(3, 4, "Writing compiled oat artifacts to system cache...")
         log("dex2oat: writing oat artifact to /data/dalvik-cache", LogType.INFO)
 
-        val isSuccess = output.contains("Success", ignoreCase = true) || !output.contains("Error", ignoreCase = true)
-        onProgress(4, 4, if (isSuccess) "Success (exit=0)" else "Compile completed with warnings")
-        log(if (isSuccess) "Success (exit=0)" else "Execution finished: $output", if (isSuccess) LogType.STDOUT else LogType.ERROR)
+        val isSuccess = output.contains("Success", ignoreCase = true)
+        onProgress(4, 4, if (isSuccess) "Success (exit=0)" else "Compile failed")
+        log(if (isSuccess) "Success (exit=0)" else "Execution finished with error: $output", if (isSuccess) LogType.STDOUT else LogType.ERROR)
 
         return isSuccess
     }

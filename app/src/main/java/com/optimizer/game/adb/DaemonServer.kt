@@ -34,7 +34,7 @@ object DaemonServer {
     private fun handleClient(socket: Socket, expectedToken: String) {
         Thread {
             try {
-                socket.soTimeout = 15000
+                socket.soTimeout = 120_000
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                 val writer = PrintWriter(socket.getOutputStream(), true)
 

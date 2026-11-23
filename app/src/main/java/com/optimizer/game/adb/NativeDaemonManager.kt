@@ -95,7 +95,8 @@ object NativeDaemonManager {
         try {
             socket = Socket()
             socket.connect(InetSocketAddress("127.0.0.1", DaemonServer.DAEMON_PORT), 2000)
-            socket.soTimeout = 15000
+            val isLongRunning = command.contains("package compile")
+            socket.soTimeout = if (isLongRunning) 120_000 else 15_000
 
             val writer = PrintWriter(socket.getOutputStream(), true)
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
