@@ -53,6 +53,30 @@ object GameOptimizerEngine {
         INFO     // # info
     }
 
+    data class ScaledDisplayMetrics(
+        val width: Int,
+        val height: Int,
+        val dpi: Int,
+        val pixelLoadPercent: Int
+    )
+
+    fun computeScaledMetrics(
+        scalePercent: Int,
+        baseWidth: Int,
+        baseHeight: Int,
+        baseDpi: Int
+    ): ScaledDisplayMetrics {
+        if (scalePercent >= 100) {
+            return ScaledDisplayMetrics(baseWidth, baseHeight, baseDpi, 100)
+        }
+        val factor = scalePercent / 100f
+        val scaledWidth = ((baseWidth * factor).toInt() / 2) * 2
+        val scaledHeight = ((baseHeight * factor).toInt() / 2) * 2
+        val scaledDpi = Math.round(baseDpi * factor).coerceIn(160, 640)
+        val pixelLoad = Math.round(factor * factor * 100f)
+        return ScaledDisplayMetrics(scaledWidth, scaledHeight, scaledDpi, pixelLoad)
+    }
+
     suspend fun log(message: String, type: LogType) {
         _shellLogs.emit(ShellLogEntry(message, type))
     }
