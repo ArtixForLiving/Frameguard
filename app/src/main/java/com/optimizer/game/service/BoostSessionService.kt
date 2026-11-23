@@ -34,10 +34,12 @@ class BoostSessionService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var telemetryJob: Job? = null
+    private var watchdogJob: Job? = null
 
     private var currentPkg: String = GameOptimizerEngine.DEFAULT_PACKAGE
     private var currentTargetFps: Int = 60
     private var currentDoze: Boolean = true
+    private var currentRenderScale: Int = 100
     private var cachedTemp: Float? = null
 
     companion object {
@@ -48,6 +50,7 @@ class BoostSessionService : Service() {
         const val EXTRA_PACKAGE_NAME = "extra_package_name"
         const val EXTRA_TARGET_FPS = "extra_target_fps"
         const val EXTRA_DOZE_ENABLED = "extra_doze_enabled"
+        const val EXTRA_RENDER_SCALE = "extra_render_scale"
 
         private const val NOTIFICATION_CHANNEL_ID = "frameguard_boost_channel"
         private const val NOTIFICATION_ID = 1001
@@ -55,12 +58,13 @@ class BoostSessionService : Service() {
         private val _isBoostActive = MutableStateFlow(false)
         val isBoostActive: StateFlow<Boolean> = _isBoostActive.asStateFlow()
 
-        fun start(context: Context, packageName: String, targetFps: Int, dozeEnabled: Boolean) {
+        fun start(context: Context, packageName: String, targetFps: Int, dozeEnabled: Boolean, renderScale: Int = 100) {
             val intent = Intent(context, BoostSessionService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_PACKAGE_NAME, packageName)
                 putExtra(EXTRA_TARGET_FPS, targetFps)
                 putExtra(EXTRA_DOZE_ENABLED, dozeEnabled)
+                putExtra(EXTRA_RENDER_SCALE, renderScale)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -90,6 +94,7 @@ class BoostSessionService : Service() {
                 currentPkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: GameOptimizerEngine.DEFAULT_PACKAGE
                 currentTargetFps = intent.getIntExtra(EXTRA_TARGET_FPS, 60)
                 currentDoze = intent.getBooleanExtra(EXTRA_DOZE_ENABLED, true)
+                currentRenderScale = intent.getIntExtra(EXTRA_RENDER_SCALE, 100)
 
                 val notification = buildCustomNotification()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -106,24 +111,26 @@ class BoostSessionService : Service() {
                 _isBoostActive.value = true
 
                 serviceScope.launch {
-                    GameOptimizerEngine.applyProfile(currentPkg, currentTargetFps, currentDoze, applicationContext)
+                    GameOptimizerEngine.applyProfile(currentPkg, currentTargetFps, currentDoze, currentRenderScale, applicationContext)
                     updateNotification()
                 }
 
                 startTelemetryPoller()
+                startProcessWatchdog(currentPkg)
             }
 
             ACTION_SWITCH_FPS -> {
                 val newFps = intent.getIntExtra(EXTRA_TARGET_FPS, 30)
                 currentTargetFps = newFps
                 serviceScope.launch {
-                    GameOptimizerEngine.applyProfile(currentPkg, currentTargetFps, currentDoze, applicationContext)
+                    GameOptimizerEngine.applyProfile(currentPkg, currentTargetFps, currentDoze, currentRenderScale, applicationContext)
                     updateNotification()
                 }
             }
 
             ACTION_STOP -> {
                 telemetryJob?.cancel()
+                watchdogJob?.cancel()
                 serviceScope.launch {
                     try {
                         GameOptimizerEngine.restoreDefaults(currentPkg)
@@ -137,6 +144,26 @@ class BoostSessionService : Service() {
         }
 
         return START_NOT_STICKY
+    }
+
+    private fun startProcessWatchdog(packageName: String) {
+        watchdogJob?.cancel()
+        watchdogJob = serviceScope.launch {
+            // Initial launch grace period (8000ms) for the game process to initialize
+            delay(8000)
+            while (isActive && _isBoostActive.value) {
+                delay(3000)
+                try {
+                    val pidOut = PrivilegeManager.exec("pidof $packageName").trim()
+                    if (pidOut.isEmpty() || pidOut.contains("ERROR")) {
+                        // Game process terminated or swiped away from Recents
+                        GameOptimizerEngine.log("Process exit detected for $packageName (PID terminated)", GameOptimizerEngine.LogType.INFO)
+                        stop(this@BoostSessionService)
+                        break
+                    }
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     private fun startTelemetryPoller() {
@@ -184,7 +211,12 @@ class BoostSessionService : Service() {
 
         // Badge
         val pairedHz = GameOptimizerEngine.pairedRefreshRate.value
-        remoteViews.setTextViewText(R.id.notification_cap_badge, "CAP $currentTargetFps • $pairedHz")
+        val capText = if (currentRenderScale < 100) {
+            "CAP $currentTargetFps • ${currentRenderScale}% • $pairedHz"
+        } else {
+            "CAP $currentTargetFps • $pairedHz"
+        }
+        remoteViews.setTextViewText(R.id.notification_cap_badge, capText)
 
         // Telemetry
         val tempText = cachedTemp?.let { String.format(Locale.US, "%.1f°C", it) } ?: "36.2°C"
@@ -244,6 +276,7 @@ class BoostSessionService : Service() {
     override fun onDestroy() {
         _isBoostActive.value = false
         telemetryJob?.cancel()
+        watchdogJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
     }

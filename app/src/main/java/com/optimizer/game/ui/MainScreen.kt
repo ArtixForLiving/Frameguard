@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -76,6 +77,8 @@ fun MainScreen(viewModel: MainViewModel) {
     val thermalSubText by viewModel.thermalSubText.collectAsState()
     val pairedRefreshRate by viewModel.pairedRefreshRate.collectAsState()
     val currentDisplayHz by viewModel.currentDisplayHz.collectAsState()
+    val renderScale by viewModel.renderScale.collectAsState()
+    val scaledMetrics by viewModel.scaledDisplayMetrics.collectAsState()
     val logs by viewModel.logs.collectAsState()
 
     val isConnected = privilegeState.isConnected
@@ -111,7 +114,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     color = BoneWhite
                 )
                 Text(
-                    text = "BUILD 105",
+                    text = "BUILD 106",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
@@ -193,11 +196,24 @@ fun MainScreen(viewModel: MainViewModel) {
                 .verticalScroll(rememberScrollState())
         ) {
             // 2. TELEMETRY GRID
+            val effectiveScale = if (selectedApp.supportsRenderScale) renderScale else 100
+            val displayValue = when {
+                isBoostActive && effectiveScale < 100 -> "${pairedRefreshRate}•${effectiveScale}%"
+                isBoostActive -> pairedRefreshRate
+                else -> currentDisplayHz
+            }
+            val displaySub = when {
+                isBoostActive && effectiveScale < 100 -> "${scaledMetrics.width}×${scaledMetrics.height}"
+                isBoostActive -> "LOCKED"
+                effectiveScale < 100 -> "ARMED ${effectiveScale}%"
+                else -> "NATIVE"
+            }
+
             TelemetryGrid(
                 thermalText = thermalValue,
                 thermalSubText = thermalSubText,
-                displayText = if (isBoostActive) pairedRefreshRate else currentDisplayHz,
-                displaySubText = if (isBoostActive) "LOCKED" else "NATIVE",
+                displayText = displayValue,
+                displaySubText = displaySub,
                 profileText = if (isBoostActive) "CAP $targetFps" else "IDLE",
                 profileSubText = if (isBoostActive) "ACTIVE" else "STANDBY"
             )
@@ -348,11 +364,13 @@ fun MainScreen(viewModel: MainViewModel) {
                     .background(CanvasDark)
             ) {
                 // Section Title Bar
-                Box(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(ObsidianSurface)
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "SYSTEM DIRECTIVES",
@@ -360,6 +378,12 @@ fun MainScreen(viewModel: MainViewModel) {
                         fontSize = 9.5.sp,
                         fontWeight = FontWeight.Medium,
                         letterSpacing = 1.sp,
+                        color = ZincMuted
+                    )
+                    Text(
+                        text = if (selectedApp.supportsRenderScale) "3 MODULES" else "2 MODULES",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 8.5.sp,
                         color = ZincMuted
                     )
                 }
@@ -516,6 +540,201 @@ fun MainScreen(viewModel: MainViewModel) {
                                         .fillMaxWidth(compileProgress)
                                         .height(2.dp)
                                         .background(AccentPurple)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Directive 3 (Conditional): Render Scale
+                if (selectedApp.supportsRenderScale) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(HairlineBorder)
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Render Scale",
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BoneWhite
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "wm size & wm density",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.5.sp,
+                                    color = ZincMuted
+                                )
+                            }
+
+                            Text(
+                                text = "${scaledMetrics.width}×${scaledMetrics.height} • ${scaledMetrics.dpi} DPI",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = ZincMuted
+                            )
+                        }
+
+                        // Boxed Segmented Control [ 100% | 75% | 50% ]
+                        Row(
+                            modifier = Modifier
+                                .alpha(if (isConnected) 1.0f else 0.35f)
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(ObsidianSurface)
+                                .border(1.dp, HairlineBorder, RoundedCornerShape(4.dp))
+                                .height(38.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf(100, 75, 50).forEach { scale ->
+                                val isSelected = scale == renderScale
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .background(if (isSelected) BoneWhite else ObsidianSurface)
+                                        .clickable(
+                                            enabled = isConnected,
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            viewModel.onSelectRenderScale(scale)
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Text(
+                                            text = "$scale%",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 12.5.sp,
+                                            color = if (isSelected) CanvasDark else ZincMuted
+                                        )
+                                        if (scale == 75) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(4.dp)
+                                                    .clip(CircleShape)
+                                                    .background(AccentPurple)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Smart Preset Adaptive Banner
+                        val bannerTag = when (renderScale) {
+                            100 -> "· REC ${selectedApp.recommendedScale}%"
+                            75 -> "· 75% (${scaledMetrics.pixelLoadPercent}% PIXELS)"
+                            else -> "· 50% (25% PIXELS)"
+                        }
+                        val bannerTitle = when (renderScale) {
+                            100 -> "SCALE PRESET"
+                            75 -> "SCALED"
+                            else -> "LOW RES"
+                        }
+                        val bannerReason = when (renderScale) {
+                            100 -> selectedApp.scaleReason.ifEmpty { "75% cuts GPU load by 44% for steadier 60 FPS." }
+                            75 -> "Runs at ${scaledMetrics.width}×${scaledMetrics.height} · Resets on exit."
+                            else -> "Half resolution (${scaledMetrics.width}×${scaledMetrics.height}) · Resets on exit."
+                        }
+                        val bannerAction = when (renderScale) {
+                            100 -> "[ APPLY ${selectedApp.recommendedScale}% ]"
+                            75 -> "[ RESET 100% ]"
+                            else -> "[ RESTORE 75% ]"
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(ObsidianSurface)
+                                .border(
+                                    1.dp,
+                                    if (renderScale < 100) AccentPurple.copy(alpha = 0.45f) else HairlineBorder,
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .padding(12.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(5.dp)
+                                                .clip(CircleShape)
+                                                .background(AccentPurple)
+                                        )
+                                        Text(
+                                            text = bannerTitle,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 0.8.sp,
+                                            color = AccentPurple
+                                        )
+                                        Text(
+                                            text = bannerTag,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BoneWhite
+                                        )
+                                    }
+
+                                    Text(
+                                        text = bannerAction,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 8.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentPurple,
+                                        modifier = Modifier.clickable {
+                                            val target = if (renderScale == 100) selectedApp.recommendedScale else if (renderScale == 75) 100 else 75
+                                            viewModel.onSelectRenderScale(target)
+                                        }
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Text(
+                                    text = bannerReason,
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 11.sp,
+                                    color = ZincMuted,
+                                    lineHeight = 15.sp,
+                                    modifier = Modifier.padding(start = 11.dp)
                                 )
                             }
                         }

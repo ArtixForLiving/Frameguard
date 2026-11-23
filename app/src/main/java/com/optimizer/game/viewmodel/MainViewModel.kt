@@ -174,6 +174,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDozeEnabled = MutableStateFlow(true)
     val isDozeEnabled: StateFlow<Boolean> = _isDozeEnabled.asStateFlow()
 
+    private val prefs = application.getSharedPreferences("frameguard_game_profiles", Context.MODE_PRIVATE)
+
+    private val _renderScale = MutableStateFlow(100)
+    val renderScale: StateFlow<Int> = _renderScale.asStateFlow()
+
+    private val _scaledDisplayMetrics = MutableStateFlow(
+        GameOptimizerEngine.computeScaledMetrics(100, 1080, 2400, 420)
+    )
+    val scaledDisplayMetrics: StateFlow<GameOptimizerEngine.ScaledDisplayMetrics> = _scaledDisplayMetrics.asStateFlow()
+
     private val _isCompiling = MutableStateFlow(false)
     val isCompiling: StateFlow<Boolean> = _isCompiling.asStateFlow()
 
@@ -248,15 +258,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         PrivilegeManager.registerNativeBackend(nativeBackend)
         PrivilegeManager.init(application)
 
-        // Initialize optimizer engine with active game preset
+        // Initialize optimizer engine with active game preset and persisted profile
         GameOptimizerEngine.setTargetPackage(defaultPresets[0].packageName)
-        GameOptimizerEngine.setTargetFps(defaultPresets[0].recommendedFps)
+        loadGameProfile(defaultPresets[0])
 
         loadInstalledGames()
 
         val dm = application.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
         dm?.registerDisplayListener(displayListener, null)
         queryCurrentRefreshRate()
+        updateDisplayMetrics()
     }
 
     private fun queryCurrentRefreshRate() {
@@ -491,14 +502,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _compileDone.value = false
         GameOptimizerEngine.setTargetPackage(app.packageName)
 
-        // Smart Preset: Automatically adapt target FPS to game's recommended tier
-        _targetFps.value = app.recommendedFps
-        GameOptimizerEngine.setTargetFps(app.recommendedFps)
+        // Load saved profile or apply defaults with persistence
+        loadGameProfile(app)
 
         viewModelScope.launch {
             GameOptimizerEngine.log("target set -> ${app.packageName}", GameOptimizerEngine.LogType.STDOUT)
-            GameOptimizerEngine.log("smart preset applied: ${app.recommendedFps} FPS (${app.recommendationReason})", GameOptimizerEngine.LogType.INFO)
+            GameOptimizerEngine.log("smart preset applied: ${_targetFps.value} FPS (${app.recommendationReason})", GameOptimizerEngine.LogType.INFO)
+            if (app.supportsRenderScale) {
+                GameOptimizerEngine.log("render scale directive available (${_renderScale.value}%)", GameOptimizerEngine.LogType.INFO)
+            }
         }
+    }
+
+    fun onSelectRenderScale(scale: Int) {
+        if (!_selectedApp.value.supportsRenderScale) return
+        _renderScale.value = scale
+        updateDisplayMetrics()
+        saveGameProfile(_selectedApp.value.packageName, _targetFps.value, scale, _isDozeEnabled.value)
+        viewModelScope.launch {
+            if (scale < 100) {
+                GameOptimizerEngine.log("render scale set to $scale% for ${_selectedApp.value.name}", GameOptimizerEngine.LogType.INFO)
+            } else {
+                GameOptimizerEngine.log("render scale set to 100% (native)", GameOptimizerEngine.LogType.INFO)
+            }
+        }
+    }
+
+    private fun updateDisplayMetrics() {
+        val dm = getApplication<Application>().getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
+        val baseWidth = display?.mode?.physicalWidth ?: 1080
+        val baseHeight = display?.mode?.physicalHeight ?: 2400
+        val baseDpi = getApplication<Application>().resources.displayMetrics.densityDpi
+        val scale = if (_selectedApp.value.supportsRenderScale) _renderScale.value else 100
+        _scaledDisplayMetrics.value = GameOptimizerEngine.computeScaledMetrics(scale, baseWidth, baseHeight, baseDpi)
+    }
+
+    private fun saveGameProfile(packageName: String, fps: Int, scale: Int, doze: Boolean) {
+        prefs.edit()
+            .putInt("${packageName}_fps", fps)
+            .putInt("${packageName}_scale", scale)
+            .putBoolean("${packageName}_doze", doze)
+            .apply()
+    }
+
+    private fun loadGameProfile(app: GameAppItem) {
+        val savedFps = prefs.getInt("${app.packageName}_fps", app.recommendedFps)
+        val savedScale = if (app.supportsRenderScale) {
+            prefs.getInt("${app.packageName}_scale", 100)
+        } else 100
+        val savedDoze = prefs.getBoolean("${app.packageName}_doze", true)
+
+        _targetFps.value = savedFps
+        _renderScale.value = savedScale
+        _isDozeEnabled.value = savedDoze
+        GameOptimizerEngine.setTargetFps(savedFps)
+        updateDisplayMetrics()
     }
 
     fun onToggleAppDrawer() {
@@ -507,6 +566,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onSelectFps(fps: Int) {
         _targetFps.value = fps
+        saveGameProfile(_selectedApp.value.packageName, fps, _renderScale.value, _isDozeEnabled.value)
         GameOptimizerEngine.setTargetFps(fps)
         if (isBoostActive.value && privilegeState.value.isConnected) {
             viewModelScope.launch {
@@ -550,6 +610,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onToggleDoze(enabled: Boolean) {
         _isDozeEnabled.value = enabled
+        saveGameProfile(_selectedApp.value.packageName, _targetFps.value, _renderScale.value, enabled)
         GameOptimizerEngine.setDozeEnabled(enabled)
         if (isBoostActive.value && privilegeState.value.isConnected) {
             viewModelScope.launch {
@@ -584,11 +645,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!privilegeState.value.isConnected) return
 
         if (!isBoostActive.value) {
+            val scale = if (_selectedApp.value.supportsRenderScale) _renderScale.value else 100
             BoostSessionService.start(
                 context = context,
                 packageName = _selectedApp.value.packageName,
                 targetFps = _targetFps.value,
-                dozeEnabled = _isDozeEnabled.value
+                dozeEnabled = _isDozeEnabled.value,
+                renderScale = scale
             )
         } else {
             BoostSessionService.stop(context)

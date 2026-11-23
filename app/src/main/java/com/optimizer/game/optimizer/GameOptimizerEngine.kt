@@ -33,6 +33,9 @@ object GameOptimizerEngine {
     var currentDoze: Boolean = true
         private set
 
+    var currentRenderScale: Int = 100
+        private set
+
     private val _pairedRefreshRate = MutableStateFlow("120Hz")
     val pairedRefreshRate: StateFlow<String> = _pairedRefreshRate.asStateFlow()
 
@@ -157,10 +160,12 @@ object GameOptimizerEngine {
         packageName: String = currentPackage,
         targetFps: Int = currentFps,
         doze: Boolean = currentDoze,
+        renderScale: Int = currentRenderScale,
         context: Context? = null
     ): Boolean {
         currentPackage = packageName
         currentDoze = doze
+        currentRenderScale = renderScale
 
         // 1. Force-stop target package first so SurfaceFlinger applies overlay rule cleanly on cold start
         val stopCmd = "am force-stop $packageName"
@@ -168,7 +173,27 @@ object GameOptimizerEngine {
         val stopOut = PrivilegeManager.exec(stopCmd)
         if (stopOut.isNotBlank()) log(stopOut, LogType.STDOUT)
 
-        // 2. Lock Android 15/16 DeviceConfig background sync
+        // 2. Pre-launch swapchain display scaling if renderScale < 100
+        if (renderScale < 100 && context != null) {
+            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+            val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
+            val baseWidth = display?.mode?.physicalWidth ?: 1080
+            val baseHeight = display?.mode?.physicalHeight ?: 2400
+            val baseDpi = context.resources.displayMetrics.densityDpi
+            val metrics = computeScaledMetrics(renderScale, baseWidth, baseHeight, baseDpi)
+
+            val sizeCmd = "wm size ${metrics.width}x${metrics.height}"
+            log(sizeCmd, LogType.COMMAND)
+            PrivilegeManager.exec(sizeCmd)
+
+            val densityCmd = "wm density ${metrics.dpi}"
+            log(densityCmd, LogType.COMMAND)
+            PrivilegeManager.exec(densityCmd)
+
+            log("Render scale pre-launch configured: ${renderScale}% (${metrics.width}x${metrics.height} @ ${metrics.dpi}dpi)", LogType.INFO)
+        }
+
+        // 3. Lock Android 15/16 DeviceConfig background sync
         val syncLockCmd = "device_config set_sync_disabled_for_tests until_reboot"
         log(syncLockCmd, LogType.COMMAND)
         val syncLockOut = PrivilegeManager.exec(syncLockCmd)
@@ -249,6 +274,16 @@ object GameOptimizerEngine {
      * Restores system defaults and disengages optimization profile.
      */
     suspend fun restoreDefaults(packageName: String = currentPackage): Boolean {
+        // 0. Reset display render scale
+        val resetSizeCmd = "wm size reset"
+        log(resetSizeCmd, LogType.COMMAND)
+        PrivilegeManager.exec(resetSizeCmd)
+
+        val resetDensityCmd = "wm density reset"
+        log(resetDensityCmd, LogType.COMMAND)
+        PrivilegeManager.exec(resetDensityCmd)
+        currentRenderScale = 100
+
         // 1. Release Deep Doze
         val unforceCmd = "dumpsys deviceidle unforce"
         log(unforceCmd, LogType.COMMAND)
