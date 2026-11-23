@@ -38,42 +38,42 @@ FrameGuard is an Android performance optimization utility engineered for consist
 
 ---
 
-## 📱 Catatan Kompatibilitas Merek HP (OEM Guide)
+## 📱 OEM & Brand Compatibility Guide
 
-FrameGuard v1.0.5 menggunakan protokol standar AOSP Android 11+ (API 30+). Namun, beberapa antarmuka pabrikan (OEM ROM) memiliki kebijakan keamanan atau penghemat baterai khusus:
+FrameGuard v1.0.5 utilizes standard AOSP Android 11+ (API 30+) protocols. However, certain manufacturer OEM ROMs implement custom security rules or aggressive battery management:
 
 ### 1. Google Pixel, Motorola, Sony, Asus ROG, Nothing OS (Near-AOSP)
 * **Status:** **100% Plug & Play.**
-* **Catatan:** Menggunakan implementasi Android murni. Cukup aktifkan Wireless Debugging, masukkan 6 digit kode pada notifikasi FrameGuard, dan daemon langsung aktif.
+* **Details:** Uses clean, upstream Android implementation. Enable Wireless Debugging in Developer Options, input the 6-digit pairing code via the FrameGuard notification, and the daemon starts immediately without extra configuration.
 
 ### 2. Xiaomi, Redmi, POCO (MIUI / HyperOS)
-* **Status:** Kompatibel (Butuh 1 opsi tambahan).
-* **Catatan:**
-  * Buka **Opsi Pengembang (Developer Options)**.
-  * Aktifkan toggle **"USB debugging (Security settings)"** / *Setelan keamanan* (memerlukan akun Mi). Opsi ini diperlukan agar shell diizinkan mengubah refresh rate layar (`settings put system`).
-  * Jika HyperOS otomatis mematikan Wireless Debugging setelah beberapa menit, hal ini tidak masalah karena `DaemonServer` FrameGuard sudah berjalan mandiri di memori RAM.
+* **Status:** Compatible (Requires 1 additional toggle).
+* **Details:**
+  * Open **Developer Options**.
+  * Enable **"USB debugging (Security settings)"** (requires signing in with a Mi Account). This permission is mandatory for shell directives to adjust display refresh rates (`settings put system`).
+  * If HyperOS automatically turns off Wireless Debugging after several minutes, FrameGuard is unaffected because its background `DaemonServer` runs independently in system RAM under UID 2000.
 
 ### 3. Samsung Galaxy (One UI)
-* **Status:** **100% Kompatibel.**
-* **Catatan:**
-  * Samsung Knox tidak memblokir koneksi loopback TCP `127.0.0.1` antara aplikasi dan UID 2000.
-  * Jika Samsung Game Optimizing Service (GOS) aktif, FrameGuard tetap dapat memaksakan limit refresh rate panel dan profile frame pacing via command `device_config`.
+* **Status:** **100% Compatible.**
+* **Details:**
+  * Samsung Knox does not restrict local TCP loopback (`127.0.0.1`) communication between application sandboxes and UID 2000.
+  * If Samsung Game Optimizing Service (GOS) is active, FrameGuard still overrides display refresh rate bounds and enforces game frame pacing via `device_config`.
 
 ### 4. OPPO, Realme, OnePlus (ColorOS / OxygenOS / Realme UI)
-* **Status:** Kompatibel (Butuh 1 opsi tambahan).
-* **Catatan:**
-  * Buka **Opsi Pengembang (Developer Options)**.
-  * Aktifkan opsi **"Disable permission monitoring"** (*Nonaktifkan pemantauan izin*). Ini mencegah ColorOS menampilkan dialog konfirmasi keamanan saat FrameGuard mengeksekusi perintah shell di latar belakang.
+* **Status:** Compatible (Requires 1 additional toggle).
+* **Details:**
+  * Open **Developer Options**.
+  * Enable **"Disable permission monitoring"**. This prevents ColorOS from interrupting background shell command execution with security confirmation prompts.
 
 ### 5. Vivo & iQOO (Funtouch OS / OriginOS)
-* **Status:** Kompatibel.
-* **Catatan:**
-  * Manajemen memori Funtouch OS cukup agresif. Disarankan untuk **Mengunci (Lock)** aplikasi FrameGuard di menu *Recent Apps* agar UI tidak ditutup paksa saat kamu bermain game berat. Daemon UID 2000 akan tetap berjalan di background sistem.
+* **Status:** Compatible.
+* **Details:**
+  * Funtouch OS employs aggressive memory cleanup. It is recommended to **Lock** FrameGuard in the **Recent Apps** overview so the UI is not terminated during heavy gaming sessions. The privileged UID 2000 daemon continues executing in the background regardless.
 
 ### 6. Transsion (Infinix, Tecno, itel - XOS / HiOS)
-* **Status:** Kompatibel.
-* **Catatan:**
-  * Pastikan FrameGuard tidak dimasukkan ke dalam daftar *Freeze* atau pembersih RAM otomatis bawaan XOS/HiOS.
+* **Status:** Compatible.
+* **Details:**
+  * Ensure FrameGuard is excluded from the system "Freeze" application or automatic background task killers.
 
 ---
 
@@ -91,15 +91,16 @@ FrameGuard v1.0.5 menggunakan protokol standar AOSP Android 11+ (API 30+). Namun
 
 ## 🚀 Getting Started
 
-### Metode 1: Built-in Wireless ADB (Rekomendasi - Tanpa PC)
-1. Sambungkan HP ke jaringan **Wi-Fi** (atau aktifkan Wi-Fi hotspot lokal).
-2. Buka **Developer Options (Opsi Pengembang)** di Pengaturan HP, lalu aktifkan **Wireless debugging (Proses debug nirkabel)**.
-3. Buka FrameGuard, ketuk **`[ PAIR WIRELESS ADB ]`**.
-4. Ketuk *Pair device with pairing code*, lalu masukkan 6 digit angka yang muncul ke notifikasi FrameGuard.
-5. Header akan langsung berubah menjadi **`[ ● UID 2000 • ADB ]`**.
+### Method 1: Built-in Wireless ADB (Recommended - Zero PC)
+1. Connect your device to a **Wi-Fi** network (or enable a local Wi-Fi hotspot).
+2. Open **Developer Options** in Android Settings and toggle on **Wireless debugging**.
+3. Open FrameGuard and tap **`[ PAIR WIRELESS ADB ]`**.
+4. In the Wireless Debugging screen, tap **Pair device with pairing code**.
+5. Pull down the Android notification shade and enter the 6-digit code into FrameGuard's **ENTER CODE** notification action.
+6. The header updates immediately to **`[ ● UID 2000 • ADB ]`**, and the setup card auto-collapses.
 
-### Metode 2: Shizuku (Alternatif)
-Jika HP kamu sudah memiliki [Shizuku](https://shizuku.rikka.app/) yang aktif, cukup buka FrameGuard dan ketuk **`[ CONNECT SHIZUKU ]`**.
+### Method 2: Shizuku (Alternative)
+If you already have [Shizuku](https://shizuku.rikka.app/) running on your device, launch FrameGuard and tap **`[ CONNECT SHIZUKU ]`**.
 
 ---
 
