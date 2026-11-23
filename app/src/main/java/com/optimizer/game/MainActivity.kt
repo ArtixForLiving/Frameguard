@@ -11,7 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
-import com.optimizer.game.shizuku.ShizukuManager
+import com.optimizer.game.privilege.PrivilegeManager
 import com.optimizer.game.ui.MainScreen
 import com.optimizer.game.ui.theme.FrameGuardTheme
 import com.optimizer.game.viewmodel.MainViewModel
@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
 
-        ShizukuManager.init()
+        PrivilegeManager.init(this)
 
         requestNotificationPermissionIfNeeded()
 
@@ -47,11 +47,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        ShizukuManager.updateState()
+        PrivilegeManager.refreshState()
+        window?.decorView?.postDelayed({
+            PrivilegeManager.refreshState()
+        }, 600)
     }
 
     override fun onDestroy() {
-        ShizukuManager.cleanup()
         super.onDestroy()
     }
 

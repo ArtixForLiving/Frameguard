@@ -14,3 +14,4 @@ app/build
 *.aab
 *.log
 .vscode/
+docs/

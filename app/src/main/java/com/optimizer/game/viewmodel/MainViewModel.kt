@@ -9,11 +9,15 @@ import android.os.BatteryManager
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.optimizer.game.adb.NativeAdbBackend
 import com.optimizer.game.optimizer.GameOptimizerEngine
+import com.optimizer.game.privilege.PrivilegeManager
+import com.optimizer.game.privilege.PrivilegeSource
+import com.optimizer.game.privilege.PrivilegeState
 import com.optimizer.game.service.BoostSessionService
 import com.optimizer.game.shizuku.ShizukuManager
-import com.optimizer.game.shizuku.ShizukuState
 import com.optimizer.game.ui.components.GameAppItem
+import com.optimizer.game.ui.components.triggerWirelessAdbPairing
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -25,7 +29,7 @@ import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    val shizukuState: StateFlow<ShizukuState> = ShizukuManager.state
+    val privilegeState: StateFlow<PrivilegeState> = PrivilegeManager.state
     val isBoostActive: StateFlow<Boolean> = BoostSessionService.isBoostActive
     val pairedRefreshRate: StateFlow<String> = GameOptimizerEngine.pairedRefreshRate
 
@@ -186,6 +190,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        val nativeBackend = NativeAdbBackend(application)
+        PrivilegeManager.registerNativeBackend(nativeBackend)
+        PrivilegeManager.init(application)
+
         // Initialize optimizer engine with active game preset
         GameOptimizerEngine.setTargetPackage(defaultPresets[0].packageName)
         GameOptimizerEngine.setTargetFps(defaultPresets[0].recommendedFps)
@@ -313,9 +321,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var temp: Float? = null
         var sensorSource = "SOC"
 
-        if (shizukuState.value == ShizukuState.CONNECTED) {
+        if (privilegeState.value.isConnected) {
             try {
-                val dump = ShizukuManager.exec("dumpsys thermalservice")
+                val dump = PrivilegeManager.exec("dumpsys thermalservice")
                 temp = extractHalThermal(dump)
             } catch (_: Exception) {}
         }
@@ -346,20 +354,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun onShizukuPillClicked() {
-        when (shizukuState.value) {
-            ShizukuState.UNAVAILABLE -> {
-                ShizukuManager.updateState()
-            }
-            ShizukuState.NO_PERMISSION -> {
+    fun onPillClicked() {
+        val state = privilegeState.value
+        if (!state.isConnected) {
+            PrivilegeManager.refreshState()
+            if (!privilegeState.value.isConnected) {
                 ShizukuManager.requestPermission()
             }
-            ShizukuState.CONNECTED -> {
-                viewModelScope.launch {
-                    GameOptimizerEngine.log("binder status: IShellService attached (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
-                }
+        } else {
+            viewModelScope.launch {
+                GameOptimizerEngine.log("Privilege backend active: ${state.source} (${state.statusMessage})", GameOptimizerEngine.LogType.STDOUT)
             }
         }
+    }
+
+    fun onPairAdb(context: Context) {
+        triggerWirelessAdbPairing(context)
+    }
+
+    fun onConnectShizuku() {
+        ShizukuManager.requestPermission()
     }
 
     fun onSelectApp(app: GameAppItem) {
@@ -385,7 +399,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onSelectFps(fps: Int) {
         _targetFps.value = fps
         GameOptimizerEngine.setTargetFps(fps)
-        if (isBoostActive.value && shizukuState.value == ShizukuState.CONNECTED) {
+        if (isBoostActive.value && privilegeState.value.isConnected) {
             viewModelScope.launch {
                 val pkg = _selectedApp.value.packageName
                 var effectiveFps = fps
@@ -405,19 +419,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _targetFps.value = effectiveFps
 
                 // Set custom mode intervention config and activate Custom Game Mode
-                val gameSetCmd = "cmd game set --fps $effectiveFps $pkg"
+                val gameSetCmd = "cmd game set --mode 2 --fps $effectiveFps $pkg"
                 GameOptimizerEngine.log(gameSetCmd, GameOptimizerEngine.LogType.COMMAND)
-                ShizukuManager.exec(gameSetCmd)
+                PrivilegeManager.exec(gameSetCmd)
 
                 val gameModeCmd = "cmd game mode custom $pkg"
                 GameOptimizerEngine.log(gameModeCmd, GameOptimizerEngine.LogType.COMMAND)
-                ShizukuManager.exec(gameModeCmd)
+                PrivilegeManager.exec(gameModeCmd)
 
                 // Set refresh rate
                 val peakCmd = "settings put system peak_refresh_rate $optimalHz"
                 val minCmd = "settings put system min_refresh_rate $optimalHz"
-                ShizukuManager.exec(peakCmd)
-                ShizukuManager.exec(minCmd)
+                PrivilegeManager.exec(peakCmd)
+                PrivilegeManager.exec(minCmd)
 
                 val pairedLabel = "${optimalHz.substringBefore(".")}Hz"
                 GameOptimizerEngine.setPairedHz(pairedLabel)
@@ -428,17 +442,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onToggleDoze(enabled: Boolean) {
         _isDozeEnabled.value = enabled
         GameOptimizerEngine.setDozeEnabled(enabled)
-        if (isBoostActive.value && shizukuState.value == ShizukuState.CONNECTED) {
+        if (isBoostActive.value && privilegeState.value.isConnected) {
             viewModelScope.launch {
                 val cmd = if (enabled) "dumpsys deviceidle force-idle" else "dumpsys deviceidle unforce"
                 GameOptimizerEngine.log(cmd, GameOptimizerEngine.LogType.COMMAND)
-                ShizukuManager.exec(cmd)
+                PrivilegeManager.exec(cmd)
             }
         }
     }
 
     fun onRunArtCompile() {
-        if (_isCompiling.value || shizukuState.value != ShizukuState.CONNECTED) return
+        if (_isCompiling.value || !privilegeState.value.isConnected) return
 
         _isCompiling.value = true
         _compileDone.value = false
@@ -458,7 +472,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onToggleBoost(context: Context) {
-        if (shizukuState.value != ShizukuState.CONNECTED) return
+        if (!privilegeState.value.isConnected) return
 
         if (!isBoostActive.value) {
             BoostSessionService.start(

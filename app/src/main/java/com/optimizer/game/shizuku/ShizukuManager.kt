@@ -6,6 +6,9 @@ import android.content.pm.PackageManager
 import android.os.IBinder
 import com.optimizer.game.BuildConfig
 import com.optimizer.game.IShellService
+import com.optimizer.game.privilege.PrivilegeBackend
+import com.optimizer.game.privilege.PrivilegeSource
+import com.optimizer.game.privilege.PrivilegeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,11 +16,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 
-object ShizukuManager {
+object ShizukuManager : PrivilegeBackend {
     const val SHIZUKU_PERMISSION_REQUEST_CODE = 2000
 
-    private val _state = MutableStateFlow(ShizukuState.UNAVAILABLE)
-    val state: StateFlow<ShizukuState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND"))
+    override val state: StateFlow<PrivilegeState> = _state.asStateFlow()
 
     private var shellService: IShellService? = null
     private var isBound = false
@@ -34,9 +37,9 @@ object ShizukuManager {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             if (service != null && service.pingBinder()) {
                 shellService = IShellService.Stub.asInterface(service)
-                _state.value = ShizukuState.CONNECTED
+                _state.value = PrivilegeState(true, PrivilegeSource.SHIZUKU, "UID 2000 · SHIZUKU")
             } else {
-                _state.value = ShizukuState.UNAVAILABLE
+                _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
             }
         }
 
@@ -54,7 +57,7 @@ object ShizukuManager {
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         shellService = null
         isBound = false
-        _state.value = ShizukuState.UNAVAILABLE
+        _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
     }
 
     private val permissionResultListener =
@@ -63,7 +66,7 @@ object ShizukuManager {
                 if (grantResult == PackageManager.PERMISSION_GRANTED) {
                     bindService()
                 } else {
-                    _state.value = ShizukuState.NO_PERMISSION
+                    _state.value = PrivilegeState(false, PrivilegeSource.NONE, "NO PERM")
                 }
             }
         }
@@ -84,27 +87,31 @@ object ShizukuManager {
         } catch (_: Exception) {}
     }
 
+    override fun disconnect() {
+        cleanup()
+    }
+
     fun updateState() {
         if (!Shizuku.pingBinder()) {
             shellService = null
             isBound = false
-            _state.value = ShizukuState.UNAVAILABLE
+            _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
             return
         }
 
         if (Shizuku.isPreV11()) {
-            _state.value = ShizukuState.UNAVAILABLE
+            _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
             return
         }
 
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
             if (shellService != null && shellService?.asBinder()?.isBinderAlive == true) {
-                _state.value = ShizukuState.CONNECTED
+                _state.value = PrivilegeState(true, PrivilegeSource.SHIZUKU, "UID 2000 · SHIZUKU")
             } else {
                 bindService()
             }
         } else {
-            _state.value = ShizukuState.NO_PERMISSION
+            _state.value = PrivilegeState(false, PrivilegeSource.NONE, "NO PERM")
         }
     }
 
@@ -120,14 +127,14 @@ object ShizukuManager {
 
     private fun bindService() {
         if (isBound && shellService != null && shellService?.asBinder()?.isBinderAlive == true) {
-            _state.value = ShizukuState.CONNECTED
+            _state.value = PrivilegeState(true, PrivilegeSource.SHIZUKU, "UID 2000 · SHIZUKU")
             return
         }
         try {
             Shizuku.bindUserService(userServiceArgs, userServiceConnection)
             isBound = true
         } catch (e: Exception) {
-            _state.value = ShizukuState.UNAVAILABLE
+            _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
         }
     }
 
@@ -141,13 +148,13 @@ object ShizukuManager {
         }
     }
 
-    suspend fun exec(cmd: String): String = withContext(Dispatchers.IO) {
+    override suspend fun exec(command: String): String = withContext(Dispatchers.IO) {
         val service = shellService
         if (service == null || !service.asBinder().isBinderAlive) {
             return@withContext "ERROR: Shizuku ShellUserService not connected"
         }
         try {
-            service.runCommand(cmd)
+            service.runCommand(command)
         } catch (e: Exception) {
             "ERROR: ${e.message}"
         }

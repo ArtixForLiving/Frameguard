@@ -3,7 +3,7 @@ package com.optimizer.game.optimizer
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.view.Display
-import com.optimizer.game.shizuku.ShizukuManager
+import com.optimizer.game.privilege.PrivilegeManager
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Utilitarian OS-level game optimizer executing ADB shell directives via Shizuku (UID 2000).
+ * Utilitarian OS-level game optimizer executing ADB shell directives via PrivilegeBackend (UID 2000).
  * Strictly operates at system settings/binder level without modifying game files or injecting code.
  */
 object GameOptimizerEngine {
@@ -83,7 +83,7 @@ object GameOptimizerEngine {
             val supported = display?.supportedModes?.any { Math.round(it.refreshRate) == hz }
             if (supported == true) return true
         }
-        val out = ShizukuManager.exec("dumpsys display")
+        val out = PrivilegeManager.exec("dumpsys display")
         return out.contains("${hz}.0 fps", ignoreCase = true) ||
                 out.contains("${hz}fps", ignoreCase = true) ||
                 out.contains("fps=${hz}", ignoreCase = true)
@@ -101,7 +101,7 @@ object GameOptimizerEngine {
         onProgress(1, 4, "Verifying dex metadata and dependencies...")
         log("dex2oat: verifying primary.vdex", LogType.INFO)
 
-        val output = ShizukuManager.exec("cmd package compile -m speed -f $packageName")
+        val output = PrivilegeManager.exec("cmd package compile -m speed -f $packageName")
         log(output, if (output.contains("Success", ignoreCase = true)) LogType.STDOUT else LogType.INFO)
 
         onProgress(2, 4, "Optimizing bytecode and compiling hot methods (speed)...")
@@ -120,13 +120,14 @@ object GameOptimizerEngine {
     /**
      * Applies the Cool & Stable thermal/pacing profile:
      * 1. Force-stops target package so SurfaceFlinger applies overlay rules cleanly on launch.
-     * 2. Calculates exact integer divisor refresh rate (30->60Hz, 40->120Hz, 45->90Hz fallback 40@120Hz, 60->60Hz).
-     * 3. Caches original system refresh rates.
-     * 4. Enforces game_overlay intervention via GameManagerService.
-     * 5. Sets game mode and FPS cap via GameManagerService.
-     * 6. Locks display refresh rate to optimal integer multiple.
-     * 7. Forces device deep doze (if enabled).
-     * 8. Launches the target game via monkey intent launcher.
+     * 2. Locks Android 15/16 DeviceConfig background sync during active session.
+     * 3. Sets game_overlay FPS limit configuration.
+     * 4. Calculates exact integer divisor refresh rate (30->60Hz, 40->120Hz, 45->90Hz fallback 40@120Hz, 60->60Hz).
+     * 5. Caches original system refresh rates.
+     * 6. Sets game mode and FPS cap via GameManagerService.
+     * 7. Locks display refresh rate to optimal integer multiple.
+     * 8. Forces device deep doze (if enabled).
+     * 9. Launches the target game via monkey intent launcher.
      */
     suspend fun applyProfile(
         packageName: String = currentPackage,
@@ -140,10 +141,16 @@ object GameOptimizerEngine {
         // 1. Force-stop target package first so SurfaceFlinger applies overlay rule cleanly on cold start
         val stopCmd = "am force-stop $packageName"
         log(stopCmd, LogType.COMMAND)
-        val stopOut = ShizukuManager.exec(stopCmd)
+        val stopOut = PrivilegeManager.exec(stopCmd)
         if (stopOut.isNotBlank()) log(stopOut, LogType.STDOUT)
 
-        // 2. Lock display refresh rate directly to match requested FPS hardware tier
+        // 2. Lock Android 15/16 DeviceConfig background sync
+        val syncLockCmd = "device_config set_sync_disabled_for_tests until_reboot"
+        log(syncLockCmd, LogType.COMMAND)
+        val syncLockOut = PrivilegeManager.exec(syncLockCmd)
+        if (syncLockOut.isNotBlank()) log(syncLockOut, LogType.STDOUT)
+
+        // 3. Configure game_overlay FPS rule
         var effectiveFps = targetFps
         val optimalHz = when (targetFps) {
             60 -> "60.0"
@@ -161,10 +168,15 @@ object GameOptimizerEngine {
         val pairedLabel = "${optimalHz.substringBefore(".")}Hz"
         _pairedRefreshRate.value = pairedLabel
 
-        // 3. Cache current refresh rates if not already saved
+        val overlayCmd = "device_config put game_overlay $packageName mode=2,fps=$effectiveFps:mode=3,fps=$effectiveFps"
+        log(overlayCmd, LogType.COMMAND)
+        val overlayOut = PrivilegeManager.exec(overlayCmd)
+        if (overlayOut.isNotBlank()) log(overlayOut, LogType.STDOUT)
+
+        // 4. Cache current refresh rates if not already saved
         if (!hasCachedRates) {
-            val peak = ShizukuManager.exec("settings get system peak_refresh_rate").trim()
-            val min = ShizukuManager.exec("settings get system min_refresh_rate").trim()
+            val peak = PrivilegeManager.exec("settings get system peak_refresh_rate").trim()
+            val min = PrivilegeManager.exec("settings get system min_refresh_rate").trim()
 
             cachedPeakRefreshRate = if (peak.isNotEmpty() && peak != "null" && !peak.contains("ERROR")) peak else "120.0"
             cachedMinRefreshRate = if (min.isNotEmpty() && min != "null" && !min.contains("ERROR")) min else "60.0"
@@ -172,40 +184,40 @@ object GameOptimizerEngine {
             log("Cached display refresh rates: peak=$cachedPeakRefreshRate min=$cachedMinRefreshRate", LogType.INFO)
         }
 
-        // 4. Set custom mode intervention config and activate Custom Game Mode
-        val gameSetCmd = "cmd game set --fps $effectiveFps $packageName"
+        // 5. Set custom mode intervention config and activate Game Mode
+        val gameSetCmd = "cmd game set --mode 2 --fps $effectiveFps $packageName"
         log(gameSetCmd, LogType.COMMAND)
-        val gameSetOut = ShizukuManager.exec(gameSetCmd)
+        val gameSetOut = PrivilegeManager.exec(gameSetCmd)
         if (gameSetOut.isNotBlank()) log(gameSetOut, LogType.STDOUT)
 
         val gameModeCmd = "cmd game mode custom $packageName"
         log(gameModeCmd, LogType.COMMAND)
-        val gameModeOut = ShizukuManager.exec(gameModeCmd)
+        val gameModeOut = PrivilegeManager.exec(gameModeCmd)
         if (gameModeOut.isNotBlank()) log(gameModeOut, LogType.STDOUT)
 
         // 6. Lock display refresh rate to optimal integer multiple
         val peakCmd = "settings put system peak_refresh_rate $optimalHz"
         val minCmd = "settings put system min_refresh_rate $optimalHz"
         log(peakCmd, LogType.COMMAND)
-        ShizukuManager.exec(peakCmd)
+        PrivilegeManager.exec(peakCmd)
         log(minCmd, LogType.COMMAND)
-        ShizukuManager.exec(minCmd)
+        PrivilegeManager.exec(minCmd)
 
         // 7. Force Deep Doze if requested
         if (doze) {
             val dozeCmd = "dumpsys deviceidle force-idle"
             log(dozeCmd, LogType.COMMAND)
-            val dozeOut = ShizukuManager.exec(dozeCmd)
+            val dozeOut = PrivilegeManager.exec(dozeCmd)
             if (dozeOut.isNotBlank()) log(dozeOut, LogType.STDOUT)
         }
 
         // 8. Launch game launcher activity
         val launchCmd = "monkey -p $packageName -c android.intent.category.LAUNCHER 1"
         log(launchCmd, LogType.COMMAND)
-        val launchOut = ShizukuManager.exec(launchCmd)
+        val launchOut = PrivilegeManager.exec(launchCmd)
         if (launchOut.isNotBlank()) log(launchOut, LogType.STDOUT)
 
-        log("Profile engaged successfully: Cap $effectiveFps FPS / $pairedLabel", LogType.STDOUT)
+        log("Profile engaged successfully: Cap $effectiveFps FPS / $pairedLabel (Sync Locked)", LogType.STDOUT)
         return true
     }
 
@@ -216,30 +228,36 @@ object GameOptimizerEngine {
         // 1. Release Deep Doze
         val unforceCmd = "dumpsys deviceidle unforce"
         log(unforceCmd, LogType.COMMAND)
-        val unforceOut = ShizukuManager.exec(unforceCmd)
+        val unforceOut = PrivilegeManager.exec(unforceCmd)
         if (unforceOut.isNotBlank()) log(unforceOut, LogType.STDOUT)
 
-        // 2. Reset custom game mode interventions and restore STANDARD (1) mode
-        val resetInterventionCmd = "cmd game reset $packageName"
-        log(resetInterventionCmd, LogType.COMMAND)
-        val resetInterventionOut = ShizukuManager.exec(resetInterventionCmd)
-        if (resetInterventionOut.isNotBlank()) log(resetInterventionOut, LogType.STDOUT)
+        // 2. Remove game_overlay intervention and restore sync
+        val deleteOverlayCmd = "device_config delete game_overlay $packageName"
+        log(deleteOverlayCmd, LogType.COMMAND)
+        val deleteOverlayOut = PrivilegeManager.exec(deleteOverlayCmd)
+        if (deleteOverlayOut.isNotBlank()) log(deleteOverlayOut, LogType.STDOUT)
 
-        val resetGameCmd = "cmd game mode standard $packageName"
+        val unlockSyncCmd = "device_config set_sync_disabled_for_tests none"
+        log(unlockSyncCmd, LogType.COMMAND)
+        val unlockSyncOut = PrivilegeManager.exec(unlockSyncCmd)
+        if (unlockSyncOut.isNotBlank()) log(unlockSyncOut, LogType.STDOUT)
+
+        // 3. Reset game mode to STANDARD (1)
+        val resetGameCmd = "cmd game mode 1 $packageName"
         log(resetGameCmd, LogType.COMMAND)
-        val resetOut = ShizukuManager.exec(resetGameCmd)
+        val resetOut = PrivilegeManager.exec(resetGameCmd)
         if (resetOut.isNotBlank()) log(resetOut, LogType.STDOUT)
 
         // 4. Restore cached or default refresh rates
         val restorePeakCmd = "settings put system peak_refresh_rate $cachedPeakRefreshRate"
         val restoreMinCmd = "settings put system min_refresh_rate $cachedMinRefreshRate"
         log(restorePeakCmd, LogType.COMMAND)
-        ShizukuManager.exec(restorePeakCmd)
+        PrivilegeManager.exec(restorePeakCmd)
         log(restoreMinCmd, LogType.COMMAND)
-        ShizukuManager.exec(restoreMinCmd)
+        PrivilegeManager.exec(restoreMinCmd)
 
         _pairedRefreshRate.value = "120Hz"
-        log("System defaults restored (Refresh Rate=$cachedPeakRefreshRate, Doze unforced)", LogType.STDOUT)
+        log("System defaults restored (Refresh Rate=$cachedPeakRefreshRate, Sync Lock released)", LogType.STDOUT)
         hasCachedRates = false
         return true
     }
@@ -249,7 +267,7 @@ object GameOptimizerEngine {
      * Returns temperature in Celsius (e.g. 41.8).
      */
     suspend fun queryThermalReading(): Float? {
-        val out = ShizukuManager.exec("dumpsys battery")
+        val out = PrivilegeManager.exec("dumpsys battery")
         val tempLine = out.lines().firstOrNull { it.contains("temperature:", ignoreCase = true) }
         return tempLine?.substringAfter("temperature:")?.trim()?.toFloatOrNull()?.let { it / 10f }
     }

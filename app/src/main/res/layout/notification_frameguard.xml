@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_notification_card"
+    android:padding="12dp">
+
+    <!-- Header Row: Game Title + Cap Badge -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/notification_game_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="WARFRAME MOBILE"
+            android:textColor="#F2F2EE"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:typeface="monospace"
+            android:ellipsize="end"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/notification_cap_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="CAP 40 • 120HZ"
+            android:textColor="#7C3AED"
+            android:textSize="10.5sp"
+            android:textStyle="bold"
+            android:typeface="monospace"
+            android:background="@drawable/bg_notification_badge"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="2dp" />
+    </LinearLayout>
+
+    <!-- Telemetry Row: Temp, Doze, Privilege -->
+    <TextView
+        android:id="@+id/notification_telemetry"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="TEMP: 36.2°C | DOZE: ON | UID 2000"
+        android:textColor="#767676"
+        android:textSize="10sp"
+        android:typeface="monospace"
+        android:maxLines="1" />
+
+    <!-- Action Buttons Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <!-- 30 FPS Quick Throttle Drop Button -->
+        <TextView
+            android:id="@+id/notification_action_fps"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="6dp"
+            android:gravity="center"
+            android:text="30 FPS"
+            android:textColor="#7C3AED"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:typeface="monospace"
+            android:background="@drawable/bg_notification_btn_fps"
+            android:paddingVertical="7dp" />
+
+        <!-- STOP & RESTORE Button -->
+        <TextView
+            android:id="@+id/notification_action_stop"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:gravity="center"
+            android:text="STOP &amp; RESTORE"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:typeface="monospace"
+            android:background="@drawable/bg_notification_btn_stop"
+            android:paddingVertical="7dp" />
+    </LinearLayout>
+
+</LinearLayout>

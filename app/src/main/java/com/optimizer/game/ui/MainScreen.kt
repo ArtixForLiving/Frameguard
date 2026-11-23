@@ -38,10 +38,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.optimizer.game.shizuku.ShizukuState
+import com.optimizer.game.privilege.PrivilegeSource
 import com.optimizer.game.ui.components.AppSelectorDrawer
 import com.optimizer.game.ui.components.FpsSegmentedControl
 import com.optimizer.game.ui.components.MechSwitch
+import com.optimizer.game.ui.components.PrivilegeSetupCard
 import com.optimizer.game.ui.components.ShellTerminalView
 import com.optimizer.game.ui.components.TelemetryGrid
 import com.optimizer.game.ui.theme.AccentPurple
@@ -52,6 +53,7 @@ import com.optimizer.game.ui.theme.HairlineBorder
 import com.optimizer.game.ui.theme.NominalGreen
 import com.optimizer.game.ui.theme.ObsidianSurface
 import com.optimizer.game.ui.theme.ProgressTrack
+import com.optimizer.game.ui.theme.SignalAmber
 import com.optimizer.game.ui.theme.SignalRed
 import com.optimizer.game.ui.theme.ZincMuted
 import com.optimizer.game.viewmodel.MainViewModel
@@ -60,7 +62,7 @@ import com.optimizer.game.viewmodel.MainViewModel
 fun MainScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
 
-    val shizukuState by viewModel.shizukuState.collectAsState()
+    val privilegeState by viewModel.privilegeState.collectAsState()
     val isBoostActive by viewModel.isBoostActive.collectAsState()
     val selectedApp by viewModel.selectedApp.collectAsState()
     val availableApps by viewModel.availableApps.collectAsState()
@@ -76,7 +78,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val currentDisplayHz by viewModel.currentDisplayHz.collectAsState()
     val logs by viewModel.logs.collectAsState()
 
-    val isConnected = shizukuState == ShizukuState.CONNECTED
+    val isConnected = privilegeState.isConnected
 
     Column(
         modifier = Modifier
@@ -86,7 +88,7 @@ fun MainScreen(viewModel: MainViewModel) {
             .navigationBarsPadding()
     ) {
         // =====================================================================
-        // 1. APP HEADER (FRAMEGUARD + BUILD 104 + SHIZUKU STATUS PILL)
+        // 1. APP HEADER (FRAMEGUARD + BUILD 105 + PRIVILEGE STATUS PILL)
         // =====================================================================
         Row(
             modifier = Modifier
@@ -109,7 +111,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     color = BoneWhite
                 )
                 Text(
-                    text = "BUILD 104",
+                    text = "BUILD 105",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
@@ -119,12 +121,17 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
             }
 
-            // Clickable Shizuku Status Pill
-            val pillDotColor = if (isConnected) NominalGreen else SignalRed
-            val pillLabel = when (shizukuState) {
-                ShizukuState.CONNECTED -> "UID 2000"
-                ShizukuState.NO_PERMISSION -> "NO PERM"
-                ShizukuState.UNAVAILABLE -> "UNBOUND"
+            // Clickable Privilege Status Pill
+            val pillDotColor = when {
+                isConnected -> NominalGreen
+                privilegeState.statusMessage.contains("NO PERM") -> SignalRed
+                else -> SignalAmber
+            }
+            val pillLabel = when {
+                privilegeState.source == PrivilegeSource.NATIVE_ADB -> "UID 2000 • ADB"
+                privilegeState.source == PrivilegeSource.SHIZUKU -> "UID 2000 • SHIZUKU"
+                privilegeState.statusMessage.contains("NO PERM") -> "NO PERM"
+                else -> "UNBOUND"
             }
 
             Row(
@@ -136,7 +143,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        viewModel.onShizukuPillClicked()
+                        viewModel.onPillClicked()
                     }
                     .padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -166,6 +173,16 @@ fun MainScreen(viewModel: MainViewModel) {
                 .height(1.dp)
                 .background(HairlineBorder)
         )
+
+        // Contextual PrivilegeSetupCard: Visible only when isConnected == false
+        AnimatedVisibility(visible = !isConnected) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                PrivilegeSetupCard(
+                    onPairAdb = { viewModel.onPairAdb(context) },
+                    onConnectShizuku = { viewModel.onConnectShizuku() }
+                )
+            }
+        }
 
         // =====================================================================
         // SCROLLABLE INSTRUMENT BODY
