@@ -4,7 +4,13 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- FrameGuard official outer frame box -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M4,4h16v16H4V4z M6,6v12h12V6H6z M8,8h8v2H8V8z M8,11h5v2H8V11z" />
+        android:fillType="evenOdd"
+        android:pathData="M3,3h18v18H3V3z M5,5v14h14V5H5z" />
+    <!-- FrameGuard monogram FG -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,7.5h5.5v1.8H9v1.8h2.5v1.8H9v3.6H7V7.5z M13,7.5h5.5v1.8H13V7.5z M13,9.3h2v5.4H13V9.3z M13,14.7h5.5v1.8H13V14.7z M16.7,11.5h1.8v3.2h-1.8V11.5z M15,11.5h2v1.8H15V11.5z" />
 </vector>
