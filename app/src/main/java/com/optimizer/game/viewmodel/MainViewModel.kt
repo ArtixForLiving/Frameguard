@@ -1,11 +1,13 @@
 package com.optimizer.game.viewmodel
 
+import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.display.DisplayManager
 import android.os.BatteryManager
+import android.os.Build
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -26,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import rikka.shizuku.Shizuku
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -52,7 +55,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val candidatePackages: List<String>,
         val recommendedFps: Int,
         val maxSupportedFps: Int,
-        val recommendationReason: String
+        val recommendationReason: String,
+        val supportsRenderScale: Boolean = false,
+        val recommendedScale: Int = 100,
+        val scaleReason: String = ""
     )
 
     companion object {
@@ -63,7 +69,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.digitalextremes.warframemobile"),
                 recommendedFps = 60,
                 maxSupportedFps = 60,
-                recommendationReason = "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals"
+                recommendationReason = "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals",
+                supportsRenderScale = false
             ),
             SupportedGameDef(
                 id = "genshin",
@@ -71,7 +78,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.miHoYo.GenshinImpact", "com.HoYoverse.GenshinImpact", "com.miHoYo.Yuanshen"),
                 recommendedFps = 60,
                 maxSupportedFps = 60,
-                recommendationReason = "Engine hard-capped at 60 FPS · 60Hz lock eliminates thermal throttling"
+                recommendationReason = "Engine hard-capped at 60 FPS · 60Hz lock eliminates thermal throttling",
+                supportsRenderScale = true,
+                recommendedScale = 75,
+                scaleReason = "75% cuts GPU load by 44% for steadier 60 FPS."
             ),
             SupportedGameDef(
                 id = "wuwa",
@@ -79,7 +89,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.kurogame.wutheringwaves.global", "com.kurogame.kj"),
                 recommendedFps = 60,
                 maxSupportedFps = 60,
-                recommendationReason = "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability"
+                recommendationReason = "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability",
+                supportsRenderScale = true,
+                recommendedScale = 75,
+                scaleReason = "75% lowers GPU heat while keeping visuals sharp."
+            ),
+            SupportedGameDef(
+                id = "roblox",
+                defaultName = "Roblox",
+                candidatePackages = listOf("com.roblox.client"),
+                recommendedFps = 60,
+                maxSupportedFps = 60,
+                recommendationReason = "Official mobile client capped at 60 FPS · 60Hz lock eliminates frame judder & saves battery",
+                supportsRenderScale = true,
+                recommendedScale = 75,
+                scaleReason = "Cuts GPU load while keeping draw distance high."
             ),
             SupportedGameDef(
                 id = "pubg",
@@ -87,7 +111,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.tencent.ig", "com.pubg.krmobile", "com.pubg.imobile", "com.vng.pubgmobile", "com.tencent.tmgp.pubgmhd"),
                 recommendedFps = 90,
                 maxSupportedFps = 120,
-                recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for competitive latency & thermals"
+                recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for competitive latency & thermals",
+                supportsRenderScale = false
             ),
             SupportedGameDef(
                 id = "freefire",
@@ -95,7 +120,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.dts.freefireth", "com.dts.freefiremax"),
                 recommendedFps = 90,
                 maxSupportedFps = 120,
-                recommendationReason = "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes"
+                recommendationReason = "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes",
+                supportsRenderScale = false
             ),
             SupportedGameDef(
                 id = "mlbb",
@@ -103,7 +129,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.mobile.legends", "com.vng.mlbbvn", "com.mobilelegends.hwag", "com.mobilelegends.mi"),
                 recommendedFps = 90,
                 maxSupportedFps = 120,
-                recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for low touch latency & thermals"
+                recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for low touch latency & thermals",
+                supportsRenderScale = false
             ),
             SupportedGameDef(
                 id = "pubgflash",
@@ -111,7 +138,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.tencent.igfit"),
                 recommendedFps = 60,
                 maxSupportedFps = 60,
-                recommendationReason = "Lightweight client capped at 60 FPS · 60Hz lock provides flat 16.6ms frametime"
+                recommendationReason = "Lightweight client capped at 60 FPS · 60Hz lock provides flat 16.6ms frametime",
+                supportsRenderScale = false
             )
         )
     }
@@ -124,7 +152,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             recommendedFps = def.recommendedFps,
             maxSupportedFps = def.maxSupportedFps,
             recommendationReason = def.recommendationReason,
-            isInstalled = false
+            isInstalled = false,
+            supportsRenderScale = def.supportsRenderScale,
+            recommendedScale = def.recommendedScale,
+            scaleReason = def.scaleReason
         )
     }
 
@@ -169,10 +200,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Add initial boot sequence logs matching prototype
+        // Log real device hardware configuration dynamically
+        logDeviceHardwareInfo()
+
+        // Observe live privilege state transitions and log accurately
         viewModelScope.launch {
-            GameOptimizerEngine.log("shizuku api v13.1.5 ready (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
-            GameOptimizerEngine.log("soc: mt6897 / dimensity 8350 · 12gb ram", GameOptimizerEngine.LogType.INFO)
+            var lastReportedSource: PrivilegeSource? = null
+            privilegeState.collect { state ->
+                if (state.isConnected && state.source != lastReportedSource) {
+                    lastReportedSource = state.source
+                    when (state.source) {
+                        PrivilegeSource.SHIZUKU -> {
+                            val version = try {
+                                Shizuku.getVersion()
+                            } catch (_: Exception) {
+                                13
+                            }
+                            GameOptimizerEngine.log("shizuku api v$version ready (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
+                        }
+                        PrivilegeSource.NATIVE_ADB -> {
+                            GameOptimizerEngine.log("native adb daemon ready (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
+                        }
+                        else -> {}
+                    }
+                } else if (!state.isConnected) {
+                    lastReportedSource = null
+                }
+            }
         }
 
         // Live hardware thermal polling loop
@@ -212,6 +266,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentDisplayHz.value = "${rate}Hz"
     }
 
+    private fun logDeviceHardwareInfo() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+
+            // 1. Dynamic Total RAM
+            val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            val memInfo = ActivityManager.MemoryInfo()
+            actManager?.getMemoryInfo(memInfo)
+            val ramGb = if (memInfo.totalMem > 0L) {
+                Math.round(memInfo.totalMem.toDouble() / (1024.0 * 1024.0 * 1024.0)).toInt()
+            } else 8
+
+            // 2. Dynamic SoC / Hardware Model
+            val socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Build.SOC_MODEL.takeIf { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) }
+            } else null
+
+            val hardware = Build.HARDWARE.lowercase(Locale.ROOT)
+            val board = Build.BOARD.lowercase(Locale.ROOT)
+
+            val socDesc = buildString {
+                if (!socModel.isNullOrBlank()) {
+                    append(socModel.lowercase(Locale.ROOT))
+                    if (!hardware.contains(socModel.lowercase(Locale.ROOT)) && hardware != "unknown") {
+                        append(" / $hardware")
+                    }
+                } else if (hardware.isNotBlank() && hardware != "unknown") {
+                    append(hardware)
+                    if (board.isNotBlank() && board != hardware && board != "unknown") {
+                        append(" / $board")
+                    }
+                } else {
+                    append(board.ifBlank { "universal" })
+                }
+            }
+
+            // 3. Dynamic Physical Display Metrics
+            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+            val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
+            val mode = display?.mode
+            val density = context.resources.displayMetrics.densityDpi
+            val screenMetrics = if (mode != null) {
+                " • ${mode.physicalWidth}x${mode.physicalHeight} @ ${density}dpi"
+            } else ""
+
+            GameOptimizerEngine.log("soc: $socDesc · ${ramGb}gb ram$screenMetrics", GameOptimizerEngine.LogType.INFO)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         val dm = getApplication<Application>().getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
@@ -242,7 +345,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             recommendedFps = gameDef.recommendedFps,
                             maxSupportedFps = gameDef.maxSupportedFps,
                             recommendationReason = gameDef.recommendationReason,
-                            isInstalled = true
+                            isInstalled = true,
+                            supportsRenderScale = gameDef.supportsRenderScale,
+                            recommendedScale = gameDef.recommendedScale,
+                            scaleReason = gameDef.scaleReason
                         )
                     } else {
                         GameAppItem(
@@ -252,7 +358,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             recommendedFps = gameDef.recommendedFps,
                             maxSupportedFps = gameDef.maxSupportedFps,
                             recommendationReason = gameDef.recommendationReason,
-                            isInstalled = false
+                            isInstalled = false,
+                            supportsRenderScale = gameDef.supportsRenderScale,
+                            recommendedScale = gameDef.recommendedScale,
+                            scaleReason = gameDef.scaleReason
                         )
                     }
                 }

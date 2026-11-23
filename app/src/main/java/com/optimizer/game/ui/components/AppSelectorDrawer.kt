@@ -45,7 +45,10 @@ data class GameAppItem(
     val recommendedFps: Int = 60,
     val maxSupportedFps: Int = 60,
     val recommendationReason: String = "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals",
-    val isInstalled: Boolean = true
+    val isInstalled: Boolean = true,
+    val supportsRenderScale: Boolean = false,
+    val recommendedScale: Int = 100,
+    val scaleReason: String = ""
 ) {
     companion object {
         fun createWithPreset(
@@ -54,46 +57,78 @@ data class GameAppItem(
             packageName: String,
             isInstalled: Boolean = true
         ): GameAppItem {
-            val (recFps, maxFps, reason) = when {
-                packageName.contains("warframemobile", ignoreCase = true) -> Triple(
+            val (recFps, maxFps, reason, supportsScale, recScale, scaleRsn) = when {
+                packageName.contains("warframemobile", ignoreCase = true) -> Tuple6(
                     60,
                     60,
-                    "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals"
+                    "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals",
+                    false,
+                    100,
+                    ""
                 )
-                packageName.contains("genshin", ignoreCase = true) || packageName.contains("yuanshen", ignoreCase = true) -> Triple(
+                packageName.contains("genshin", ignoreCase = true) || packageName.contains("yuanshen", ignoreCase = true) -> Tuple6(
                     60,
                     60,
-                    "Engine hard-capped at 60 FPS · 60Hz lock eliminates thermal throttling"
+                    "Engine hard-capped at 60 FPS · 60Hz lock eliminates thermal throttling",
+                    true,
+                    75,
+                    "75% cuts GPU load by 44% for steadier 60 FPS."
                 )
-                packageName.contains("wutheringwaves", ignoreCase = true) || packageName.contains("kurogame", ignoreCase = true) -> Triple(
+                packageName.contains("wutheringwaves", ignoreCase = true) || packageName.contains("kurogame", ignoreCase = true) -> Tuple6(
                     60,
                     60,
-                    "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability"
+                    "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability",
+                    true,
+                    75,
+                    "75% lowers GPU heat while keeping visuals sharp."
                 )
-                packageName.contains("igfit", ignoreCase = true) -> Triple(
+                packageName.contains("roblox", ignoreCase = true) -> Tuple6(
                     60,
                     60,
-                    "Lightweight client capped at 60 FPS · 60Hz lock provides flat 16.6ms frametime"
+                    "Official mobile client capped at 60 FPS · 60Hz lock eliminates frame judder & saves battery",
+                    true,
+                    75,
+                    "Cuts GPU load while keeping draw distance high."
                 )
-                packageName.contains("mobile.legends", ignoreCase = true) || packageName.contains("mobilelegends", ignoreCase = true) -> Triple(
+                packageName.contains("igfit", ignoreCase = true) -> Tuple6(
+                    60,
+                    60,
+                    "Lightweight client capped at 60 FPS · 60Hz lock provides flat 16.6ms frametime",
+                    false,
+                    100,
+                    ""
+                )
+                packageName.contains("mobile.legends", ignoreCase = true) || packageName.contains("mobilelegends", ignoreCase = true) -> Tuple6(
                     90,
                     120,
-                    "Supports up to 120 FPS · 90Hz lock recommended for low touch latency & thermals"
+                    "Supports up to 120 FPS · 90Hz lock recommended for low touch latency & thermals",
+                    false,
+                    100,
+                    ""
                 )
-                packageName.contains("pubg", ignoreCase = true) || packageName.contains("tencent.ig", ignoreCase = true) -> Triple(
+                packageName.contains("pubg", ignoreCase = true) || packageName.contains("tencent.ig", ignoreCase = true) -> Tuple6(
                     90,
                     120,
-                    "Supports up to 120 FPS · 90Hz lock recommended for competitive latency & thermals"
+                    "Supports up to 120 FPS · 90Hz lock recommended for competitive latency & thermals",
+                    false,
+                    100,
+                    ""
                 )
-                packageName.contains("freefire", ignoreCase = true) -> Triple(
+                packageName.contains("freefire", ignoreCase = true) -> Tuple6(
                     90,
                     120,
-                    "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes"
+                    "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes",
+                    false,
+                    100,
+                    ""
                 )
-                else -> Triple(
+                else -> Tuple6(
                     60,
                     60,
-                    "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals"
+                    "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals",
+                    false,
+                    100,
+                    ""
                 )
             }
             return GameAppItem(
@@ -103,11 +138,18 @@ data class GameAppItem(
                 recommendedFps = recFps,
                 maxSupportedFps = maxFps,
                 recommendationReason = reason,
-                isInstalled = isInstalled
+                isInstalled = isInstalled,
+                supportsRenderScale = supportsScale,
+                recommendedScale = recScale,
+                scaleReason = scaleRsn
             )
         }
     }
 }
+
+private data class Tuple6<A, B, C, D, E, F>(
+    val a: A, val b: B, val c: C, val d: D, val e: E, val f: F
+)
 
 /**
  * Utilitarian target game selector with inline mechanical accordion drawer.
@@ -256,6 +298,24 @@ fun AppSelectorDrawer(
                                         fontWeight = FontWeight.Medium,
                                         color = if (isActive) AccentPurple else ZincMuted
                                     )
+                                }
+                                if (app.supportsRenderScale) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(AccentPurple.copy(alpha = 0.12f))
+                                            .border(1.dp, AccentPurple.copy(alpha = 0.35f), RoundedCornerShape(2.dp))
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = "SCALE",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 7.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            letterSpacing = 0.5.sp,
+                                            color = AccentPurple
+                                        )
+                                    }
                                 }
                                 if (app.isInstalled) {
                                     Box(
