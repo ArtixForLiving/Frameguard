@@ -11,9 +11,9 @@ android {
     defaultConfig {
         applicationId = "com.optimizer.game"
         minSdk = 31
-        targetSdk = 36
-        versionCode = 105
-        versionName = "1.0.5"
+        targetSdk = 37
+        versionCode = 106
+        versionName = "1.0.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
