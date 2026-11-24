@@ -1,6 +1,7 @@
 package com.optimizer.game.optimizer
 
 import android.content.Context
+import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.view.Display
 import com.optimizer.game.privilege.PrivilegeManager
@@ -138,6 +139,7 @@ object GameOptimizerEngine {
     private var cachedPeakRefreshRate: String = "120.0"
     private var cachedMinRefreshRate: String = "60.0"
     private var hasCachedRates = false
+    private var cachedAutoRotate: String? = null
 
     var currentPackage: String = DEFAULT_PACKAGE
         private set
@@ -367,6 +369,14 @@ object GameOptimizerEngine {
             log("Cached display refresh rates: peak=$cachedPeakRefreshRate min=$cachedMinRefreshRate", LogType.INFO)
         }
 
+        // Cache user auto-rotate state so it is never permanently flipped
+        if (cachedAutoRotate == null) {
+            val currentRotation = PrivilegeManager.exec("settings get system accelerometer_rotation").trim()
+            if (currentRotation == "0" || currentRotation == "1") {
+                cachedAutoRotate = currentRotation
+            }
+        }
+
         // 5. Set custom mode intervention config and activate Game Mode
         val gameSetCmd = "cmd game set --mode 2 --fps $effectiveFps $packageName"
         log(gameSetCmd, LogType.COMMAND)
@@ -394,11 +404,32 @@ object GameOptimizerEngine {
             if (dozeOut.isNotBlank()) log(dozeOut, LogType.STDOUT)
         }
 
-        // 8. Launch game launcher activity
-        val launchCmd = "monkey -p $packageName -c android.intent.category.LAUNCHER 1"
-        log(launchCmd, LogType.COMMAND)
-        val launchOut = PrivilegeManager.exec(launchCmd)
-        if (launchOut.isNotBlank()) log(launchOut, LogType.STDOUT)
+        // 8. Launch target game via framework Intent (eliminates monkey which forces auto-rotate ON)
+        var launched = false
+        if (context != null) {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+                log("Launched $packageName via framework Launch Intent", LogType.INFO)
+                launched = true
+            }
+        }
+        if (!launched) {
+            val resolveOut = PrivilegeManager.exec("cmd package resolve-activity --brief $packageName")
+            val component = resolveOut.lines().firstOrNull { it.contains("/") && !it.contains("=") }?.trim()
+            if (!component.isNullOrEmpty()) {
+                val startCmd = "am start -n $component"
+                log(startCmd, LogType.COMMAND)
+                val startOut = PrivilegeManager.exec(startCmd)
+                if (startOut.isNotBlank()) log(startOut, LogType.STDOUT)
+            } else {
+                val startCmd = "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName"
+                log(startCmd, LogType.COMMAND)
+                val startOut = PrivilegeManager.exec(startCmd)
+                if (startOut.isNotBlank()) log(startOut, LogType.STDOUT)
+            }
+        }
 
         log("Profile engaged successfully: Cap $effectiveFps FPS / $pairedLabel (Sync Locked)", LogType.STDOUT)
         return true
@@ -471,6 +502,14 @@ object GameOptimizerEngine {
         _pairedRefreshRate.value = "120Hz"
         log("System defaults restored (Refresh Rate=$cachedPeakRefreshRate, Sync Lock released)", LogType.STDOUT)
         hasCachedRates = false
+
+        // 5. Restore user auto-rotate state if cached
+        cachedAutoRotate?.let { original ->
+            val restoreRotateCmd = "settings put system accelerometer_rotation $original"
+            log(restoreRotateCmd, LogType.COMMAND)
+            PrivilegeManager.exec(restoreRotateCmd)
+            cachedAutoRotate = null
+        }
         return true
     }
 
