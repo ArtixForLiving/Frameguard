@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -30,6 +31,64 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+enum class ThermalLimiterState {
+    UNCAPPED,
+    CAPPED_30FPS
+}
+
+class ThermalHysteresisEvaluator(val pollIntervalMs: Long = 3000) {
+    private var engageConsecutiveCount = 0
+    private var releaseConsecutiveCount = 0
+
+    fun evaluate(
+        currentStatus: Int,
+        headroom: Float,
+        currentState: ThermalLimiterState
+    ): ThermalLimiterState? {
+        when (currentState) {
+            ThermalLimiterState.UNCAPPED -> {
+                releaseConsecutiveCount = 0
+                val shouldEngage = currentStatus >= PowerManager.THERMAL_STATUS_MODERATE ||
+                        (!headroom.isNaN() && headroom >= HEADROOM_ENGAGE_THRESHOLD)
+                if (shouldEngage) {
+                    engageConsecutiveCount++
+                    if (engageConsecutiveCount >= 2) {
+                        engageConsecutiveCount = 0
+                        return ThermalLimiterState.CAPPED_30FPS
+                    }
+                } else {
+                    engageConsecutiveCount = 0
+                }
+            }
+            ThermalLimiterState.CAPPED_30FPS -> {
+                engageConsecutiveCount = 0
+                val shouldRelease = currentStatus <= PowerManager.THERMAL_STATUS_LIGHT &&
+                        (headroom.isNaN() || headroom <= HEADROOM_RELEASE_THRESHOLD)
+                if (shouldRelease) {
+                    releaseConsecutiveCount++
+                    if (releaseConsecutiveCount >= 2) {
+                        releaseConsecutiveCount = 0
+                        return ThermalLimiterState.UNCAPPED
+                    }
+                } else {
+                    releaseConsecutiveCount = 0
+                }
+            }
+        }
+        return null
+    }
+
+    fun reset() {
+        engageConsecutiveCount = 0
+        releaseConsecutiveCount = 0
+    }
+
+    companion object {
+        const val HEADROOM_ENGAGE_THRESHOLD = 0.90f
+        const val HEADROOM_RELEASE_THRESHOLD = 0.75f
+    }
+}
+
 class BoostSessionService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -40,6 +99,9 @@ class BoostSessionService : Service() {
     private var currentTargetFps: Int = 60
     private var currentDoze: Boolean = true
     private var currentRenderScale: Int = 100
+    private var currentAdaptiveThermal: Boolean = false
+    private var currentThermalState: ThermalLimiterState = ThermalLimiterState.UNCAPPED
+    private val thermalEvaluator = ThermalHysteresisEvaluator()
     private var cachedTemp: Float? = null
 
     companion object {
@@ -51,6 +113,7 @@ class BoostSessionService : Service() {
         const val EXTRA_TARGET_FPS = "extra_target_fps"
         const val EXTRA_DOZE_ENABLED = "extra_doze_enabled"
         const val EXTRA_RENDER_SCALE = "extra_render_scale"
+        const val EXTRA_ADAPTIVE_THERMAL_ENABLED = "extra_adaptive_thermal_enabled"
 
         private const val NOTIFICATION_CHANNEL_ID = "frameguard_boost_channel"
         private const val NOTIFICATION_ID = 1001
@@ -58,13 +121,21 @@ class BoostSessionService : Service() {
         private val _isBoostActive = MutableStateFlow(false)
         val isBoostActive: StateFlow<Boolean> = _isBoostActive.asStateFlow()
 
-        fun start(context: Context, packageName: String, targetFps: Int, dozeEnabled: Boolean, renderScale: Int = 100) {
+        fun start(
+            context: Context,
+            packageName: String,
+            targetFps: Int,
+            dozeEnabled: Boolean,
+            renderScale: Int = 100,
+            adaptiveThermalEnabled: Boolean = false
+        ) {
             val intent = Intent(context, BoostSessionService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_PACKAGE_NAME, packageName)
                 putExtra(EXTRA_TARGET_FPS, targetFps)
                 putExtra(EXTRA_DOZE_ENABLED, dozeEnabled)
                 putExtra(EXTRA_RENDER_SCALE, renderScale)
+                putExtra(EXTRA_ADAPTIVE_THERMAL_ENABLED, adaptiveThermalEnabled)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -95,6 +166,9 @@ class BoostSessionService : Service() {
                 currentTargetFps = intent.getIntExtra(EXTRA_TARGET_FPS, 60)
                 currentDoze = intent.getBooleanExtra(EXTRA_DOZE_ENABLED, true)
                 currentRenderScale = intent.getIntExtra(EXTRA_RENDER_SCALE, 100)
+                currentAdaptiveThermal = intent.getBooleanExtra(EXTRA_ADAPTIVE_THERMAL_ENABLED, false)
+                currentThermalState = ThermalLimiterState.UNCAPPED
+                thermalEvaluator.reset()
 
                 val notification = buildCustomNotification()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -133,7 +207,13 @@ class BoostSessionService : Service() {
                 watchdogJob?.cancel()
                 serviceScope.launch {
                     try {
-                        GameOptimizerEngine.restoreDefaults(currentPkg)
+                        if (currentThermalState == ThermalLimiterState.CAPPED_30FPS) {
+                            PrivilegeManager.exec("cmd game reset $currentPkg")
+                            PrivilegeManager.exec("device_config delete game_overlay $currentPkg")
+                            currentThermalState = ThermalLimiterState.UNCAPPED
+                        }
+                        thermalEvaluator.reset()
+                        GameOptimizerEngine.restoreDefaults(currentPkg, applicationContext)
                     } finally {
                         _isBoostActive.value = false
                         ServiceCompat.stopForeground(this@BoostSessionService, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -169,13 +249,47 @@ class BoostSessionService : Service() {
     private fun startTelemetryPoller() {
         telemetryJob?.cancel()
         telemetryJob = serviceScope.launch {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
             while (isActive && _isBoostActive.value) {
-                delay(3500)
+                delay(3000)
                 try {
                     val temp = GameOptimizerEngine.queryThermalReading()
                     if (temp != null) {
                         cachedTemp = temp
                         updateNotification()
+                    }
+
+                    if (currentAdaptiveThermal) {
+                        val status = powerManager?.currentThermalStatus ?: PowerManager.THERMAL_STATUS_NONE
+                        val headroom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && powerManager != null) {
+                            powerManager.getThermalHeadroom(10)
+                        } else {
+                            Float.NaN
+                        }
+
+                        val transition = thermalEvaluator.evaluate(status, headroom, currentThermalState)
+                        if (transition != null) {
+                            when (transition) {
+                                ThermalLimiterState.CAPPED_30FPS -> {
+                                    currentThermalState = ThermalLimiterState.CAPPED_30FPS
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        PrivilegeManager.exec("cmd game set --mode 3 --fps 30 $currentPkg")
+                                        PrivilegeManager.exec("cmd game mode battery $currentPkg")
+                                    } else {
+                                        PrivilegeManager.exec("device_config put game_overlay $currentPkg mode=3,fps=30")
+                                    }
+                                    GameOptimizerEngine.log("Thermal limit engaged: 30 FPS locked (MODERATE / VSYNC skip)", GameOptimizerEngine.LogType.STDOUT)
+                                    updateNotification()
+                                }
+                                ThermalLimiterState.UNCAPPED -> {
+                                    currentThermalState = ThermalLimiterState.UNCAPPED
+                                    PrivilegeManager.exec("cmd game reset $currentPkg")
+                                    PrivilegeManager.exec("device_config delete game_overlay $currentPkg")
+                                    GameOptimizerEngine.log("Thermal limit released: uncapped (LIGHT)", GameOptimizerEngine.LogType.STDOUT)
+                                    updateNotification()
+                                }
+                            }
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -211,7 +325,10 @@ class BoostSessionService : Service() {
 
         // Badge
         val pairedHz = GameOptimizerEngine.pairedRefreshRate.value
-        val capText = if (currentRenderScale < 100) {
+        val isThermalCapped = currentThermalState == ThermalLimiterState.CAPPED_30FPS
+        val capText = if (isThermalCapped) {
+            "Adaptive FPS Guard: 30 FPS (Thermal Saver)"
+        } else if (currentRenderScale < 100) {
             "CAP $currentTargetFps • ${currentRenderScale}% • $pairedHz"
         } else {
             "CAP $currentTargetFps • $pairedHz"
@@ -266,6 +383,8 @@ class BoostSessionService : Service() {
             .setSmallIcon(R.drawable.ic_notification)
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(remoteViews)
+            .setContentTitle(displayTitle)
+            .setContentText(if (isThermalCapped) "Adaptive FPS Guard: 30 FPS (Thermal Saver)" else capText)
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
