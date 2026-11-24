@@ -25,8 +25,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -34,9 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.optimizer.game.privilege.PrivilegeSource
@@ -62,6 +67,11 @@ import com.optimizer.game.viewmodel.MainViewModel
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
+    val config = LocalConfiguration.current
+    val isCompact = config.screenWidthDp < 360
+    val isExpanded = config.screenWidthDp > 480
+    val clampedFontScale = config.fontScale.coerceIn(0.85f, 1.15f)
+    val currentDensity = LocalDensity.current
 
     val privilegeState by viewModel.privilegeState.collectAsState()
     val isBoostActive by viewModel.isBoostActive.collectAsState()
@@ -83,119 +93,209 @@ fun MainScreen(viewModel: MainViewModel) {
 
     val isConnected = privilegeState.isConnected
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(CanvasDark)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-    ) {
-        // =====================================================================
-        // 1. APP HEADER (FRAMEGUARD + BUILD 105 + PRIVILEGE STATUS PILL)
-        // =====================================================================
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(CanvasDark)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "FRAMEGUARD",
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp,
-                    color = BoneWhite
-                )
-                Text(
-                    text = "BUILD 107",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 1.sp,
-                    color = ZincMuted,
-                    modifier = Modifier.padding(bottom = 1.dp)
-                )
-            }
-
-            // Clickable Privilege Status Pill
-            val pillDotColor = when {
-                isConnected -> NominalGreen
-                privilegeState.statusMessage.contains("NO PERM") -> SignalRed
-                else -> SignalAmber
-            }
-            val pillLabel = when {
-                privilegeState.source == PrivilegeSource.NATIVE_ADB -> "UID 2000 • ADB"
-                privilegeState.source == PrivilegeSource.SHIZUKU -> "UID 2000 • SHIZUKU"
-                privilegeState.statusMessage.contains("NO PERM") -> "NO PERM"
-                else -> "UNBOUND"
-            }
-
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(ObsidianSurface)
-                    .border(1.dp, HairlineBorder, RoundedCornerShape(4.dp))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        viewModel.onPillClicked()
-                    }
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(pillDotColor)
-                )
-                Text(
-                    text = pillLabel,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.sp,
-                    color = BoneWhite
-                )
-            }
-        }
-
-        // Hairline Divider below Header
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(HairlineBorder)
+    CompositionLocalProvider(
+        LocalDensity provides Density(
+            density = currentDensity.density,
+            fontScale = clampedFontScale
         )
+    ) {
+        Scaffold(
+            containerColor = CanvasDark,
+            topBar = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CanvasDark)
+                        .statusBarsPadding()
+                ) {
+                    // =====================================================================
+                    // 1. APP HEADER (FRAMEGUARD + BUILD 107 + PRIVILEGE STATUS PILL)
+                    // =====================================================================
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(CanvasDark)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isCompact) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                Text(
+                                    text = "FRAMEGUARD",
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp,
+                                    color = BoneWhite
+                                )
+                                Text(
+                                    text = "BUILD 107",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    letterSpacing = 1.sp,
+                                    color = ZincMuted
+                                )
+                            }
+                        } else {
+                            Row(
+                                verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "FRAMEGUARD",
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.2.sp,
+                                    color = BoneWhite
+                                )
+                                Text(
+                                    text = "BUILD 107",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    letterSpacing = 1.sp,
+                                    color = ZincMuted,
+                                    modifier = Modifier.padding(bottom = 1.dp)
+                                )
+                            }
+                        }
 
-        // Contextual PrivilegeSetupCard: Visible only when isConnected == false
-        AnimatedVisibility(visible = !isConnected) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                PrivilegeSetupCard(
-                    onPairAdb = { viewModel.onPairAdb(context) },
-                    onConnectShizuku = { viewModel.onConnectShizuku() }
-                )
+                        // Clickable Privilege Status Pill
+                        val pillDotColor = when {
+                            isConnected -> NominalGreen
+                            privilegeState.statusMessage.contains("NO PERM") -> SignalRed
+                            else -> SignalAmber
+                        }
+                        val pillLabel = when {
+                            privilegeState.source == PrivilegeSource.NATIVE_ADB -> "UID 2000 • ADB"
+                            privilegeState.source == PrivilegeSource.SHIZUKU -> "UID 2000 • SHIZUKU"
+                            privilegeState.statusMessage.contains("NO PERM") -> "NO PERM"
+                            else -> "UNBOUND"
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(ObsidianSurface)
+                                .border(1.dp, HairlineBorder, RoundedCornerShape(4.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    viewModel.onPillClicked()
+                                }
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(pillDotColor)
+                            )
+                            Text(
+                                text = pillLabel,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 1.sp,
+                                color = BoneWhite,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+
+                    // Hairline Divider below Header
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(HairlineBorder)
+                    )
+                }
+            },
+            bottomBar = {
+                // =====================================================================
+                // 7. BOTTOM DOCKED PRIMARY CTA (SHARP MECHANICAL BUTTON)
+                // =====================================================================
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CanvasDark)
+                        .navigationBarsPadding()
+                        .border(1.dp, HairlineBorder)
+                        .padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    val ctaBackground = if (isBoostActive) SignalRed else AccentPurple
+                    val ctaText = if (isBoostActive) "DISENGAGE & RESTORE DEFAULTS" else "ENGAGE PROFILE & LAUNCH"
+
+                    Box(
+                        modifier = Modifier
+                            .alpha(if (isConnected) 1.0f else 0.35f)
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(ctaBackground)
+                            .clickable(
+                                enabled = isConnected,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                viewModel.onToggleBoost(context)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = ctaText,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.sp,
+                            color = BoneWhite
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Minimal Android Gesture Pill
+                    Box(
+                        modifier = Modifier
+                            .width(96.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(GesturePill)
+                    )
+                }
             }
-        }
+        ) { innerPadding ->
+            // =====================================================================
+            // SCROLLABLE INSTRUMENT BODY
+            // =====================================================================
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Contextual PrivilegeSetupCard: Visible only when isConnected == false
+                AnimatedVisibility(visible = !isConnected) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        PrivilegeSetupCard(
+                            onPairAdb = { viewModel.onPairAdb(context) },
+                            onConnectShizuku = { viewModel.onConnectShizuku() }
+                        )
+                    }
+                }
 
-        // =====================================================================
-        // SCROLLABLE INSTRUMENT BODY
-        // =====================================================================
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-        ) {
-            // 2. TELEMETRY GRID
+                // 2. TELEMETRY GRID
             val effectiveScale = if (selectedApp.supportsRenderScale) renderScale else 100
             val displayValue = when {
                 isBoostActive && effectiveScale < 100 -> "${pairedRefreshRate}•${effectiveScale}%"
@@ -747,60 +847,10 @@ fun MainScreen(viewModel: MainViewModel) {
             // 6. LIVE SHELL OUTPUT STRIP
             ShellTerminalView(
                 logs = logs,
-                onClearLogs = { viewModel.onClearLogs() }
-            )
-        }
-
-        // =====================================================================
-        // 7. BOTTOM DOCKED PRIMARY CTA (SHARP MECHANICAL BUTTON)
-        // =====================================================================
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(CanvasDark)
-                .border(1.dp, HairlineBorder)
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            val ctaBackground = if (isBoostActive) SignalRed else AccentPurple
-            val ctaText = if (isBoostActive) "DISENGAGE & RESTORE DEFAULTS" else "ENGAGE PROFILE & LAUNCH"
-
-            Box(
-                modifier = Modifier
-                    .alpha(if (isConnected) 1.0f else 0.35f)
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(ctaBackground)
-                    .clickable(
-                        enabled = isConnected,
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        viewModel.onToggleBoost(context)
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = ctaText,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.sp,
-                    color = BoneWhite
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Minimal Android Gesture Pill
-            Box(
-                modifier = Modifier
-                    .width(96.dp)
-                    .height(3.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(GesturePill)
+                onClearLogs = { viewModel.onClearLogs() },
+                isExpanded = isExpanded
             )
         }
     }
+}
 }

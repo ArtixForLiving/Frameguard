@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,7 +40,8 @@ import com.optimizer.game.ui.theme.ZincMuted
 fun ShellTerminalView(
     logs: List<GameOptimizerEngine.ShellLogEntry>,
     onClearLogs: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isExpanded: Boolean = false
 ) {
     val listState = rememberLazyListState()
 
@@ -98,13 +100,22 @@ fun ShellTerminalView(
                 .background(HairlineBorder)
         )
 
-        // Log list viewport (approx 4 lines = 84dp)
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
+        // Log list viewport (approx 4 lines = 84dp, or flexible min 120dp when expanded)
+        val listModifier = if (isExpanded) {
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 120.dp, max = 240.dp)
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+        } else {
+            Modifier
                 .fillMaxWidth()
                 .height(84.dp)
                 .padding(horizontal = 16.dp, vertical = 6.dp)
+        }
+
+        LazyColumn(
+            state = listState,
+            modifier = listModifier
         ) {
             items(logs) { entry ->
                 Row(

@@ -13,9 +13,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.optimizer.game.ui.theme.BoneWhite
@@ -89,33 +94,50 @@ private fun TelemetryCell(
     subtitle: String,
     modifier: Modifier = Modifier
 ) {
-    Column(
-        modifier = modifier
-            .padding(14.dp)
+    val config = LocalConfiguration.current
+    val clampedFontScale = config.fontScale.coerceIn(0.85f, 1.15f)
+    val currentDensity = LocalDensity.current
+
+    CompositionLocalProvider(
+        LocalDensity provides Density(
+            density = currentDensity.density,
+            fontScale = clampedFontScale
+        )
     ) {
-        Text(
-            text = title,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.5.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 1.sp,
-            color = ZincMuted
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = value,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = BoneWhite
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = subtitle,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.5.sp,
-            color = ZincMuted
-        )
+        Column(
+            modifier = modifier
+                .padding(14.dp)
+        ) {
+            Text(
+                text = title,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 1.sp,
+                color = ZincMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = value,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = BoneWhite,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = subtitle,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.5.sp,
+                color = ZincMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
