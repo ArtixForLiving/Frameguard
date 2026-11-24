@@ -145,5 +145,7 @@ FrameGuard is engineered following modern Android architecture standards:
 
 ## 📜 License
 
-This project is licensed under the **FrameGuard Non-Commercial License**.  
-Personal, educational, and research use is permitted. **Commercial use, distribution, or monetization is strictly prohibited.** See the [LICENSE](LICENSE) file for full details.
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+
+You are free to use, modify, and distribute this software under the terms of the GPL-3.0 license. See the [LICENSE](LICENSE) file for full details.
+
