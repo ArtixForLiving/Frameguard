@@ -19,6 +19,120 @@ object GameOptimizerEngine {
 
     const val DEFAULT_PACKAGE = "com.digitalextremes.warframemobile"
 
+    private const val PREFS_GEOMETRY = "frameguard_geometry_snapshot"
+    private const val KEY_HAS_SNAPSHOT = "has_snapshot"
+    private const val KEY_PHYSICAL_WIDTH = "physical_width"
+    private const val KEY_PHYSICAL_HEIGHT = "physical_height"
+    private const val KEY_PHYSICAL_DPI = "physical_dpi"
+    private const val KEY_OVERRIDE_WIDTH = "override_width"
+    private const val KEY_OVERRIDE_HEIGHT = "override_height"
+    private const val KEY_OVERRIDE_DPI = "override_dpi"
+    private const val KEY_ACTIVE_PACKAGE = "active_package"
+
+    var activeSnapshot: DisplayGeometrySnapshot? = null
+        private set
+
+    data class DisplayGeometrySnapshot(
+        val physicalWidth: Int,
+        val physicalHeight: Int,
+        val physicalDpi: Int,
+        val overrideWidth: Int? = null,
+        val overrideHeight: Int? = null,
+        val overrideDpi: Int? = null
+    )
+
+    fun parseWmGeometry(sizeOutput: String, densityOutput: String): DisplayGeometrySnapshot {
+        val physicalSizeMatch = Regex("""Physical size:\s*(\d+)x(\d+)""", RegexOption.IGNORE_CASE).find(sizeOutput)
+        val overrideSizeMatch = Regex("""Override size:\s*(\d+)x(\d+)""", RegexOption.IGNORE_CASE).find(sizeOutput)
+
+        val physicalDensityMatch = Regex("""Physical density:\s*(\d+)""", RegexOption.IGNORE_CASE).find(densityOutput)
+        val overrideDensityMatch = Regex("""Override density:\s*(\d+)""", RegexOption.IGNORE_CASE).find(densityOutput)
+
+        val pWidth = physicalSizeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1080
+        val pHeight = physicalSizeMatch?.groupValues?.get(2)?.toIntOrNull() ?: 2400
+        val pDpi = physicalDensityMatch?.groupValues?.get(1)?.toIntOrNull() ?: 420
+
+        val oWidth = overrideSizeMatch?.groupValues?.get(1)?.toIntOrNull()
+        val oHeight = overrideSizeMatch?.groupValues?.get(2)?.toIntOrNull()
+        val oDpi = overrideDensityMatch?.groupValues?.get(1)?.toIntOrNull()
+
+        return DisplayGeometrySnapshot(
+            physicalWidth = pWidth,
+            physicalHeight = pHeight,
+            physicalDpi = pDpi,
+            overrideWidth = oWidth,
+            overrideHeight = oHeight,
+            overrideDpi = oDpi
+        )
+    }
+
+    fun buildRestoreCommands(snapshot: DisplayGeometrySnapshot?): List<String> {
+        if (snapshot == null) return emptyList()
+
+        val commands = mutableListOf<String>()
+
+        if (snapshot.overrideWidth != null && snapshot.overrideHeight != null) {
+            commands.add("wm size ${snapshot.overrideWidth}x${snapshot.overrideHeight}")
+        } else {
+            commands.add("wm size reset")
+        }
+
+        if (snapshot.overrideDpi != null) {
+            commands.add("wm density ${snapshot.overrideDpi}")
+        } else {
+            commands.add("wm density reset")
+        }
+
+        return commands
+    }
+
+    fun saveGeometrySnapshot(context: Context, snapshot: DisplayGeometrySnapshot, activePackage: String) {
+        val prefs = context.getSharedPreferences(PREFS_GEOMETRY, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putBoolean(KEY_HAS_SNAPSHOT, true)
+            .putInt(KEY_PHYSICAL_WIDTH, snapshot.physicalWidth)
+            .putInt(KEY_PHYSICAL_HEIGHT, snapshot.physicalHeight)
+            .putInt(KEY_PHYSICAL_DPI, snapshot.physicalDpi)
+            .apply {
+                if (snapshot.overrideWidth != null) putInt(KEY_OVERRIDE_WIDTH, snapshot.overrideWidth) else remove(KEY_OVERRIDE_WIDTH)
+                if (snapshot.overrideHeight != null) putInt(KEY_OVERRIDE_HEIGHT, snapshot.overrideHeight) else remove(KEY_OVERRIDE_HEIGHT)
+                if (snapshot.overrideDpi != null) putInt(KEY_OVERRIDE_DPI, snapshot.overrideDpi) else remove(KEY_OVERRIDE_DPI)
+            }
+            .putString(KEY_ACTIVE_PACKAGE, activePackage)
+            .commit()
+    }
+
+    fun loadGeometrySnapshot(context: Context): DisplayGeometrySnapshot? {
+        val prefs = context.getSharedPreferences(PREFS_GEOMETRY, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_HAS_SNAPSHOT, false)) {
+            return null
+        }
+        val pw = prefs.getInt(KEY_PHYSICAL_WIDTH, 1080)
+        val ph = prefs.getInt(KEY_PHYSICAL_HEIGHT, 2400)
+        val pd = prefs.getInt(KEY_PHYSICAL_DPI, 420)
+        val ow = if (prefs.contains(KEY_OVERRIDE_WIDTH)) prefs.getInt(KEY_OVERRIDE_WIDTH, 0) else null
+        val oh = if (prefs.contains(KEY_OVERRIDE_HEIGHT)) prefs.getInt(KEY_OVERRIDE_HEIGHT, 0) else null
+        val od = if (prefs.contains(KEY_OVERRIDE_DPI)) prefs.getInt(KEY_OVERRIDE_DPI, 0) else null
+        return DisplayGeometrySnapshot(
+            physicalWidth = pw,
+            physicalHeight = ph,
+            physicalDpi = pd,
+            overrideWidth = ow,
+            overrideHeight = oh,
+            overrideDpi = od
+        )
+    }
+
+    fun clearGeometrySnapshot(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_GEOMETRY, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+    }
+
+    fun getActiveSessionPackage(context: Context): String? {
+        val prefs = context.getSharedPreferences(PREFS_GEOMETRY, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_ACTIVE_PACKAGE, null)
+    }
+
     // Cached display refresh rates before applying profile
     private var cachedPeakRefreshRate: String = "120.0"
     private var cachedMinRefreshRate: String = "60.0"
@@ -174,21 +288,29 @@ object GameOptimizerEngine {
         if (stopOut.isNotBlank()) log(stopOut, LogType.STDOUT)
 
         // 2. Pre-launch swapchain display scaling if renderScale < 100
-        if (renderScale < 100 && context != null) {
-            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
-            val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
-            val baseWidth = display?.mode?.physicalWidth ?: 1080
-            val baseHeight = display?.mode?.physicalHeight ?: 2400
-            val baseDpi = context.resources.displayMetrics.densityDpi
+        if (renderScale < 100) {
+            val sizeOut = PrivilegeManager.exec("wm size")
+            val densityOut = PrivilegeManager.exec("wm density")
+            val snapshot = parseWmGeometry(sizeOut, densityOut)
+            activeSnapshot = snapshot
+            if (context != null) {
+                saveGeometrySnapshot(context, snapshot, packageName)
+            }
+
+            val baseWidth = snapshot.overrideWidth ?: snapshot.physicalWidth
+            val baseHeight = snapshot.overrideHeight ?: snapshot.physicalHeight
+            val baseDpi = snapshot.overrideDpi ?: snapshot.physicalDpi
             val metrics = computeScaledMetrics(renderScale, baseWidth, baseHeight, baseDpi)
 
             val sizeCmd = "wm size ${metrics.width}x${metrics.height}"
             log(sizeCmd, LogType.COMMAND)
-            PrivilegeManager.exec(sizeCmd)
+            val sizeRes = PrivilegeManager.exec(sizeCmd)
+            if (sizeRes.isNotBlank()) log(sizeRes, LogType.STDOUT)
 
             val densityCmd = "wm density ${metrics.dpi}"
             log(densityCmd, LogType.COMMAND)
-            PrivilegeManager.exec(densityCmd)
+            val densityRes = PrivilegeManager.exec(densityCmd)
+            if (densityRes.isNotBlank()) log(densityRes, LogType.STDOUT)
 
             log("Render scale pre-launch configured: ${renderScale}% (${metrics.width}x${metrics.height} @ ${metrics.dpi}dpi)", LogType.INFO)
         }
@@ -273,15 +395,34 @@ object GameOptimizerEngine {
     /**
      * Restores system defaults and disengages optimization profile.
      */
-    suspend fun restoreDefaults(packageName: String = currentPackage): Boolean {
-        // 0. Reset display render scale
-        val resetSizeCmd = "wm size reset"
-        log(resetSizeCmd, LogType.COMMAND)
-        PrivilegeManager.exec(resetSizeCmd)
+    suspend fun restoreDefaults(
+        packageName: String = currentPackage,
+        context: Context? = null
+    ): Boolean {
+        // 0. Reset display render scale using persistent snapshot or in-memory snapshot
+        val snapshot = context?.let { loadGeometrySnapshot(it) } ?: activeSnapshot
+        if (snapshot != null) {
+            val restoreCmds = buildRestoreCommands(snapshot)
+            for (cmd in restoreCmds) {
+                log(cmd, LogType.COMMAND)
+                val out = PrivilegeManager.exec(cmd)
+                if (out.isNotBlank()) log(out, LogType.STDOUT)
+            }
+            if (context != null) {
+                clearGeometrySnapshot(context)
+            }
+            activeSnapshot = null
+        } else if (currentRenderScale < 100) {
+            val resetSizeCmd = "wm size reset"
+            log(resetSizeCmd, LogType.COMMAND)
+            val resetSizeOut = PrivilegeManager.exec(resetSizeCmd)
+            if (resetSizeOut.isNotBlank()) log(resetSizeOut, LogType.STDOUT)
 
-        val resetDensityCmd = "wm density reset"
-        log(resetDensityCmd, LogType.COMMAND)
-        PrivilegeManager.exec(resetDensityCmd)
+            val resetDensityCmd = "wm density reset"
+            log(resetDensityCmd, LogType.COMMAND)
+            val resetDensityOut = PrivilegeManager.exec(resetDensityCmd)
+            if (resetDensityOut.isNotBlank()) log(resetDensityOut, LogType.STDOUT)
+        }
         currentRenderScale = 100
 
         // 1. Release Deep Doze
