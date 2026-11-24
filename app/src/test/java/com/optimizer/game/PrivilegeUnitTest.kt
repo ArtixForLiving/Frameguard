@@ -81,4 +81,10 @@ class PrivilegeUnitTest {
         assertTrue(genshin?.supportsRenderScale == true)
         assertEquals(75, genshin?.recommendedScale)
     }
+
+    @Test
+    fun testBuildConfigVersionIs107() {
+        assertEquals(107, com.optimizer.game.BuildConfig.VERSION_CODE)
+        assertEquals("1.0.7", com.optimizer.game.BuildConfig.VERSION_NAME)
+    }
 }

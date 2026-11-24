@@ -114,7 +114,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     color = BoneWhite
                 )
                 Text(
-                    text = "BUILD 106",
+                    text = "BUILD 107",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
