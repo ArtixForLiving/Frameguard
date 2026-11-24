@@ -1,6 +1,7 @@
 # FrameGuard
 
-> **Utilitarian OS-Level Game Optimizer via Standalone Wireless ADB & Rootless Directives**
+> **Utilitarian OS-Level Game Optimizer via Standalone Wireless ADB & Rootless Directives**  
+> **Official Repository:** [https://github.com/ArtixForLiving/FrameGuard](https://github.com/ArtixForLiving/FrameGuard)
 
 FrameGuard is an Android performance optimization utility engineered for consistent frame pacing, thermal headroom management, and stutter elimination. Operating under privileged shell level (**UID 2000**), FrameGuard applies system directives directly through its **built-in on-device Wireless ADB engine** or an optional **Shizuku bridge**—without modifying game APKs, injecting code, or requiring root access.
 

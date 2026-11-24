@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.PowerManager
 import android.widget.RemoteViews
@@ -18,6 +19,7 @@ import com.optimizer.game.MainActivity
 import com.optimizer.game.R
 import com.optimizer.game.optimizer.GameOptimizerEngine
 import com.optimizer.game.privilege.PrivilegeManager
+import com.optimizer.game.privilege.PrivilegeSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -231,17 +233,45 @@ class BoostSessionService : Service() {
         watchdogJob = serviceScope.launch {
             // Initial launch grace period (8000ms) for the game process to initialize
             delay(8000)
+            var consecutiveEmptyCount = 0
             while (isActive && _isBoostActive.value) {
                 delay(3000)
                 try {
-                    val pidOut = PrivilegeManager.exec("pidof $packageName").trim()
-                    if (pidOut.isEmpty() || pidOut.contains("ERROR")) {
-                        // Game process terminated or swiped away from Recents
-                        GameOptimizerEngine.log("Process exit detected for $packageName (PID terminated)", GameOptimizerEngine.LogType.INFO)
-                        stop(this@BoostSessionService)
-                        break
+                    if (PrivilegeManager.state.value.source == PrivilegeSource.SHIZUKU) {
+                        val isAlive = try {
+                            rikka.shizuku.Shizuku.pingBinder()
+                        } catch (_: Exception) {
+                            false
+                        }
+                        if (!isAlive) {
+                            GameOptimizerEngine.log("UID 2000 binder dropped. Retrying...", GameOptimizerEngine.LogType.INFO)
+                            continue
+                        }
                     }
-                } catch (_: Exception) {}
+
+                    val pidOut = PrivilegeManager.exec("pidof $packageName").trim()
+                    if (pidOut.contains("ERROR")) {
+                        GameOptimizerEngine.log("Watchdog: Binder/execution glitch ($pidOut). Retrying...", GameOptimizerEngine.LogType.INFO)
+                    } else if (pidOut.isEmpty()) {
+                        consecutiveEmptyCount++
+                        GameOptimizerEngine.log("Watchdog: Process not detected ($consecutiveEmptyCount/2 checks for $packageName)", GameOptimizerEngine.LogType.INFO)
+                        if (consecutiveEmptyCount >= 2) {
+                            GameOptimizerEngine.log("Process exit confirmed (PID terminated after 2 cycles) for $packageName", GameOptimizerEngine.LogType.INFO)
+                            stop(this@BoostSessionService)
+                            break
+                        }
+                    } else {
+                        consecutiveEmptyCount = 0
+                    }
+                } catch (_: DeadObjectException) {
+                    GameOptimizerEngine.log("UID 2000 binder dropped. Retrying...", GameOptimizerEngine.LogType.INFO)
+                } catch (e: Exception) {
+                    if (e.cause is DeadObjectException) {
+                        GameOptimizerEngine.log("UID 2000 binder dropped. Retrying...", GameOptimizerEngine.LogType.INFO)
+                    } else {
+                        GameOptimizerEngine.log("Watchdog glitch: ${e.message}. Retrying...", GameOptimizerEngine.LogType.INFO)
+                    }
+                }
             }
         }
     }

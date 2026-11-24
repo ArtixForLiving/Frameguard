@@ -87,4 +87,12 @@ class PrivilegeUnitTest {
         assertEquals(107, com.optimizer.game.BuildConfig.VERSION_CODE)
         assertEquals("1.0.7", com.optimizer.game.BuildConfig.VERSION_NAME)
     }
+
+    @Test
+    fun testCompileShadersGracefulFallback() = kotlinx.coroutines.runBlocking {
+        // In unbound unit test environment, PrivilegeManager.exec returns ERROR
+        // With HARD-03 non-blocking fallback, compileShaders returns true
+        val result = GameOptimizerEngine.compileShaders("com.example.game")
+        assertTrue(result)
+    }
 }
