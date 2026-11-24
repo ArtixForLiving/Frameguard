@@ -174,6 +174,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDozeEnabled = MutableStateFlow(true)
     val isDozeEnabled: StateFlow<Boolean> = _isDozeEnabled.asStateFlow()
 
+    private val _isAdaptiveThermalEnabled = MutableStateFlow(false)
+    val isAdaptiveThermalEnabled: StateFlow<Boolean> = _isAdaptiveThermalEnabled.asStateFlow()
+
     private val prefs = application.getSharedPreferences("frameguard_game_profiles", Context.MODE_PRIVATE)
 
     private val _renderScale = MutableStateFlow(100)
@@ -538,11 +541,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _scaledDisplayMetrics.value = GameOptimizerEngine.computeScaledMetrics(scale, baseWidth, baseHeight, baseDpi)
     }
 
-    private fun saveGameProfile(packageName: String, fps: Int, scale: Int, doze: Boolean) {
+    private fun saveGameProfile(
+        packageName: String,
+        fps: Int,
+        scale: Int,
+        doze: Boolean,
+        adaptiveThermal: Boolean = _isAdaptiveThermalEnabled.value
+    ) {
         prefs.edit()
             .putInt("${packageName}_fps", fps)
             .putInt("${packageName}_scale", scale)
             .putBoolean("${packageName}_doze", doze)
+            .putBoolean("${packageName}_adaptive_thermal", adaptiveThermal)
+            .putBoolean("adaptive_thermal_${packageName}", adaptiveThermal)
             .apply()
     }
 
@@ -552,10 +563,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             prefs.getInt("${app.packageName}_scale", 100)
         } else 100
         val savedDoze = prefs.getBoolean("${app.packageName}_doze", true)
+        val savedAdaptiveThermal = prefs.getBoolean(
+            "${app.packageName}_adaptive_thermal",
+            prefs.getBoolean("adaptive_thermal_${app.packageName}", false)
+        )
 
         _targetFps.value = savedFps
         _renderScale.value = savedScale
         _isDozeEnabled.value = savedDoze
+        _isAdaptiveThermalEnabled.value = savedAdaptiveThermal
         GameOptimizerEngine.setTargetFps(savedFps)
         updateDisplayMetrics()
     }
@@ -621,6 +637,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun onToggleAdaptiveThermal(enabled: Boolean) {
+        _isAdaptiveThermalEnabled.value = enabled
+        saveGameProfile(_selectedApp.value.packageName, _targetFps.value, _renderScale.value, _isDozeEnabled.value, enabled)
+        viewModelScope.launch {
+            val stateDesc = if (enabled) "ENABLED" else "DISABLED"
+            GameOptimizerEngine.log("adaptive thermal limiter $stateDesc", GameOptimizerEngine.LogType.INFO)
+        }
+    }
+
     fun onRunArtCompile() {
         if (_isCompiling.value || !privilegeState.value.isConnected) return
 
@@ -651,7 +676,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 packageName = _selectedApp.value.packageName,
                 targetFps = _targetFps.value,
                 dozeEnabled = _isDozeEnabled.value,
-                renderScale = scale
+                renderScale = scale,
+                adaptiveThermalEnabled = _isAdaptiveThermalEnabled.value
             )
         } else {
             BoostSessionService.stop(context)
