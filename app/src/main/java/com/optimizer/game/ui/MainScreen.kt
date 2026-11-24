@@ -3,6 +3,7 @@ package com.optimizer.game.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -328,6 +330,145 @@ fun MainScreen(viewModel: MainViewModel) {
                 onSelectApp = { app -> viewModel.onSelectApp(app) }
             )
 
+            // 4A. ADAPTIVE THERMAL LIMITER
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(CanvasDark)
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 12.dp)
+                    ) {
+                        Text(
+                            text = "Adaptive Thermal Limiter",
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BoneWhite,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "30 FPS @ moderate",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.5.sp,
+                            color = ZincMuted,
+                            maxLines = 1,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+
+                    // Right Compact Segmented Control
+                    Row(
+                        modifier = Modifier
+                            .width(148.dp)
+                            .height(32.dp)
+                            .background(ObsidianSurface, RoundedCornerShape(4.dp))
+                            .border(BorderStroke(1.dp, HairlineBorder), RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(4.dp)),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Left Segment: OFF
+                        val isOff = !isAdaptiveThermalEnabled
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(if (isOff) Color(0xFF222222) else ObsidianSurface)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    if (isAdaptiveThermalEnabled) {
+                                        viewModel.onToggleAdaptiveThermal(false)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "OFF",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isOff) BoneWhite else ZincMuted
+                            )
+                        }
+
+                        // Center Divider
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(HairlineBorder)
+                        )
+
+                        // Right Segment: ADAPTIVE
+                        val isAdaptive = isAdaptiveThermalEnabled
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(if (isAdaptive) BoneWhite else ObsidianSurface)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    if (!isAdaptiveThermalEnabled) {
+                                        viewModel.onToggleAdaptiveThermal(true)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "ADAPTIVE",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isAdaptive) CanvasDark else ZincMuted
+                            )
+                        }
+                    }
+                }
+
+                // Conditional Hint Box
+                AnimatedVisibility(
+                    visible = isAdaptiveThermalEnabled,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .background(ObsidianSurface, RoundedCornerShape(4.dp))
+                            .border(1.dp, HairlineBorder, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 12.dp, vertical = 9.dp)
+                    ) {
+                        Text(
+                            text = "Disable system Game Turbo / Game Space to prevent 30 FPS cap override.",
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 11.sp,
+                            color = ZincMuted,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(HairlineBorder)
+            )
+
             // 4. FRAME PACING CONTROL
             Column(
                 modifier = Modifier
@@ -482,7 +623,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         color = ZincMuted
                     )
                     Text(
-                        text = if (selectedApp.supportsRenderScale) "4 MODULES" else "3 MODULES",
+                        text = if (selectedApp.supportsRenderScale) "3 MODULES" else "2 MODULES",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 8.5.sp,
                         color = ZincMuted
@@ -647,95 +788,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(HairlineBorder)
-                )
-
-                // Directive 3: Adaptive Thermal Limiter
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 12.dp)
-                        ) {
-                            Text(
-                                text = "Adaptive Thermal Limiter",
-                                fontFamily = FontFamily.SansSerif,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = BoneWhite
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "PowerManager HAL • 30 FPS SurfaceFlinger lock",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.5.sp,
-                                color = ZincMuted
-                            )
-                        }
-
-                        MechSwitch(
-                            checked = isAdaptiveThermalEnabled,
-                            onCheckedChange = { viewModel.onToggleAdaptiveThermal(it) },
-                            enabled = isConnected
-                        )
-                    }
-
-                    // Conditional Micro-Hint
-                    AnimatedVisibility(
-                        visible = isAdaptiveThermalEnabled,
-                        enter = fadeIn(),
-                        exit = fadeOut()
-                    ) {
-                        Column(modifier = Modifier.padding(top = 10.dp)) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(ObsidianSurface)
-                                    .border(
-                                        width = 1.dp,
-                                        color = AccentPurple.copy(alpha = 0.35f),
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(7.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(5.dp)
-                                            .clip(CircleShape)
-                                            .background(AccentPurple)
-                                    )
-                                    Text(
-                                        text = "Disarankan matikan Game Turbo / Game Space bawaan HP agar limit 30 FPS tidak tertimpa.",
-                                        fontFamily = FontFamily.SansSerif,
-                                        fontSize = 11.sp,
-                                        color = ZincMuted,
-                                        lineHeight = 15.sp
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Directive 4 (Conditional): Render Scale
+                // Directive 3 (Conditional): Render Scale
                 if (selectedApp.supportsRenderScale) {
                     Box(
                         modifier = Modifier
