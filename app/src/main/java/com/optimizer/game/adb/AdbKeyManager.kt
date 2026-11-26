@@ -55,7 +55,9 @@ object AdbKeyManager {
                 val privKey = kf.generatePrivate(PKCS8EncodedKeySpec(privBytes))
 
                 val certFact = CertificateFactory.getInstance("X.509")
-                val cert = certFact.generateCertificate(FileInputStream(certFile)) as X509Certificate
+                val cert = FileInputStream(certFile).use { fis ->
+                    certFact.generateCertificate(fis) as X509Certificate
+                }
 
                 // Verify cryptographic match between private key and certificate
                 val test = "adb_verify".toByteArray(Charsets.UTF_8)
@@ -86,7 +88,8 @@ object AdbKeyManager {
 
         // Generate self-signed X.509 certificate valid for 20 years
         val subject = X500Name("CN=FrameGuard,O=ArtixForLiving")
-        val serial = BigInteger.valueOf(System.currentTimeMillis())
+        val randomSerial = BigInteger(64, SecureRandom())
+        val serial = if (randomSerial.signum() <= 0) BigInteger.ONE else randomSerial
         val notBefore = Date()
         val notAfter = Date(System.currentTimeMillis() + 20L * 365 * 24 * 60 * 60 * 1000)
 

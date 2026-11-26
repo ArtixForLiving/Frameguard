@@ -17,5 +17,22 @@ data class PrivilegeState(
 interface PrivilegeBackend {
     val state: StateFlow<PrivilegeState>
     suspend fun exec(command: String): String
+    suspend fun execResult(command: String): ShellResult {
+        val out = exec(command)
+        return if (out.startsWith("ERROR:")) {
+            ShellResult(
+                exitCode = -1,
+                stdout = "",
+                stderr = "",
+                transportError = out.removePrefix("ERROR:").trim()
+            )
+        } else {
+            ShellResult(exitCode = 0, stdout = out, stderr = "")
+        }
+    }
+
+    suspend fun execArgs(args: List<String>): ShellResult =
+        execResult(args.joinToString(" "))
+
     fun disconnect()
 }

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 object PrivilegeManager {
 
@@ -16,10 +17,17 @@ object PrivilegeManager {
     private val _state = MutableStateFlow(PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND"))
     val state: StateFlow<PrivilegeState> = _state.asStateFlow()
 
+    private val initialized = AtomicBoolean(false)
+
+    @Volatile
     private var activeBackend: PrivilegeBackend = ShizukuManager
+
+    @Volatile
     private var nativeAdbBackend: PrivilegeBackend? = null
 
+    @Synchronized
     fun registerNativeBackend(backend: PrivilegeBackend) {
+        if (nativeAdbBackend != null) return
         nativeAdbBackend = backend
         scope.launch {
             backend.state.collect { nativeState ->
@@ -35,6 +43,7 @@ object PrivilegeManager {
     }
 
     fun init(context: Context) {
+        if (!initialized.compareAndSet(false, true)) return
         val appContext = context.applicationContext
         if (nativeAdbBackend == null) {
             registerNativeBackend(com.optimizer.game.adb.NativeAdbBackend(appContext))
@@ -73,8 +82,26 @@ object PrivilegeManager {
         }
     }
 
+    suspend fun execResult(command: String): ShellResult {
+        val result = activeBackend.execResult(command)
+        if (result.transportError != null) {
+            _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
+            refreshState()
+        }
+        return result
+    }
+
+    suspend fun execArgs(args: List<String>): ShellResult {
+        val result = activeBackend.execArgs(args)
+        if (result.transportError != null) {
+            _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
+            refreshState()
+        }
+        return result
+    }
+
     suspend fun exec(command: String): String {
-        return activeBackend.exec(command)
+        return execResult(command).toLegacyString()
     }
 
     fun disconnect() {

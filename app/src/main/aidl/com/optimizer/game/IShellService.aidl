@@ -1,6 +1,9 @@
 package com.optimizer.game;
 
+import com.optimizer.game.privilege.ShellResult;
+
 interface IShellService {
-    String runCommand(String command);
+    ShellResult runCommand(String command);
+    ShellResult runArgs(in String[] args);
     void destroy();
 }
