@@ -2,7 +2,12 @@ package com.optimizer.game
 
 import com.optimizer.game.adb.DaemonProtocol
 import com.optimizer.game.adb.DaemonServer
+import com.optimizer.game.adb.NativeDaemonManager
 import com.optimizer.game.privilege.ShellResult
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -18,7 +23,9 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class DaemonMutualAuthTest {
 
@@ -172,6 +179,40 @@ class DaemonMutualAuthTest {
             assertFalse(serverThread.isAlive)
         } finally {
             tempPortFile.delete()
+        }
+    }
+
+    @Test
+    fun testConcurrentEnsureDaemonStartedLaunchesOnlyOnce() = runBlocking {
+        val previousPort = NativeDaemonManager.currentPort
+        NativeDaemonManager.currentPort = null
+        try {
+            val launchCount = AtomicInteger(0)
+            val daemonRunning = AtomicBoolean(false)
+            val publishedPort = AtomicReference<Int?>(null)
+
+            val results = (1..5).map {
+                async {
+                    NativeDaemonManager.ensureDaemonStartedInternal(
+                        checkAlive = { daemonRunning.get() && NativeDaemonManager.currentPort == 41234 },
+                        readPort = { publishedPort.get() },
+                        launchDaemon = {
+                            launchCount.incrementAndGet()
+                            delay(50)
+                            publishedPort.set(41234)
+                            daemonRunning.set(true)
+                            ShellResult(exitCode = 0, stdout = "", stderr = "")
+                        },
+                        pollDelayMs = 10L
+                    )
+                }
+            }.awaitAll()
+
+            assertTrue(results.all { it })
+            assertEquals(1, launchCount.get())
+            assertEquals(41234, NativeDaemonManager.currentPort)
+        } finally {
+            NativeDaemonManager.currentPort = previousPort
         }
     }
 }

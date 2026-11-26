@@ -4,6 +4,8 @@ import android.content.Context
 import com.optimizer.game.privilege.ShellResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -19,6 +21,7 @@ object NativeDaemonManager {
 
     private const val TOKEN_FILE = "daemon_auth_token"
     private var cachedToken: String? = null
+    private val bootstrapMutex = Mutex()
 
     @Volatile
     var currentPort: Int? = null
@@ -60,46 +63,65 @@ object NativeDaemonManager {
 
     /**
      * Bootstraps DaemonServer via ADB TLS shell if it is not already running.
+     * Serialized via bootstrapMutex so concurrent callers never spawn duplicate daemons.
      */
-    suspend fun ensureDaemonStarted(context: Context, connectPort: Int): Boolean = withContext(Dispatchers.IO) {
-        if (isDaemonAlive(context)) return@withContext true
+    suspend fun ensureDaemonStarted(context: Context, connectPort: Int): Boolean =
+        ensureDaemonStartedInternal(
+            checkAlive = { isDaemonAlive(context) },
+            readPort = { readDaemonPortOverAdb(context, connectPort) },
+            launchDaemon = {
+                val token = getOrCreateAuthToken(context)
+                val apkPath = context.packageCodePath
+                // Feed token via stdin so /proc/<pid>/cmdline never exposes it; read/printf are shell builtins.
+                val bootstrapCmd = "rm -f ${DaemonServer.PORT_FILE_PATH}; " +
+                    "IFS= read -r FG_TOK; " +
+                    "printf '%s\\n' \"\$FG_TOK\" | nohup app_process -Djava.class.path='$apkPath' " +
+                    "/system/bin com.optimizer.game.adb.DaemonServer >/dev/null 2>&1 &"
 
-        // Reuse an already-running daemon if its ephemeral port file is valid and passes mutual auth.
-        val existingPort = readDaemonPortOverAdb(context, connectPort)
-        if (existingPort != null) {
-            currentPort = existingPort
-            if (isDaemonAlive(context)) return@withContext true
-        }
-
-        val token = getOrCreateAuthToken(context)
-        val apkPath = context.packageCodePath
-        // Feed token via stdin so /proc/<pid>/cmdline never exposes it; read/printf are shell builtins.
-        val bootstrapCmd = "rm -f ${DaemonServer.PORT_FILE_PATH}; " +
-            "IFS= read -r FG_TOK; " +
-            "printf '%s\\n' \"\$FG_TOK\" | nohup app_process -Djava.class.path='$apkPath' " +
-            "/system/bin com.optimizer.game.adb.DaemonServer >/dev/null 2>&1 &"
-
-        val launchResult = AdbTlsClient.execDetached(
-            context = context,
-            port = connectPort,
-            command = bootstrapCmd,
-            stdinPayload = "$token\n"
+                AdbTlsClient.execDetached(
+                    context = context,
+                    port = connectPort,
+                    command = bootstrapCmd,
+                    stdinPayload = "$token\n"
+                )
+            }
         )
-        if (launchResult.transportError != null) {
-            return@withContext false
-        }
 
-        for (i in 0 until 8) {
-            delay(400)
-            val discoveredPort = readDaemonPortOverAdb(context, connectPort)
-            if (discoveredPort != null) {
-                currentPort = discoveredPort
-                if (isDaemonAlive(context)) {
-                    return@withContext true
+    internal suspend fun ensureDaemonStartedInternal(
+        checkAlive: suspend () -> Boolean,
+        readPort: suspend () -> Int?,
+        launchDaemon: suspend () -> ShellResult,
+        pollDelayMs: Long = 400L
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (checkAlive()) return@withContext true
+
+        bootstrapMutex.withLock {
+            if (checkAlive()) return@withContext true
+
+            // Reuse an already-running daemon if its ephemeral port file is valid and passes mutual auth.
+            val existingPort = readPort()
+            if (existingPort != null) {
+                currentPort = existingPort
+                if (checkAlive()) return@withContext true
+            }
+
+            val launchResult = launchDaemon()
+            if (launchResult.transportError != null) {
+                return@withContext false
+            }
+
+            for (i in 0 until 8) {
+                delay(pollDelayMs)
+                val discoveredPort = readPort()
+                if (discoveredPort != null) {
+                    currentPort = discoveredPort
+                    if (checkAlive()) {
+                        return@withContext true
+                    }
                 }
             }
+            false
         }
-        false
     }
 
     private suspend fun readDaemonPortOverAdb(context: Context, connectPort: Int): Int? {
