@@ -649,23 +649,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onRunArtCompile() {
-        if (_isCompiling.value || !privilegeState.value.isConnected) return
-
-        _isCompiling.value = true
+        // Removed in v1.0.8; stubbed until Task 5 removes the UI button.
+        _isCompiling.value = false
         _compileDone.value = false
         _compileProgress.value = 0f
-
-        viewModelScope.launch {
-            val pkg = _selectedApp.value.packageName
-            val success = GameOptimizerEngine.compileShaders(pkg) { step, total, _ ->
-                _compileProgress.value = step.toFloat() / total.toFloat()
-                delay(350)
-            }
-            _compileProgress.value = 1.0f
-            delay(250)
-            _isCompiling.value = false
-            _compileDone.value = success
-        }
     }
 
     fun onToggleBoost(context: Context) {

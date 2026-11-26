@@ -87,16 +87,8 @@ class PrivilegeUnitTest {
     }
 
     @Test
-    fun testBuildConfigVersionIs107() {
-        assertEquals(107, com.optimizer.game.BuildConfig.VERSION_CODE)
-        assertEquals("1.0.7", com.optimizer.game.BuildConfig.VERSION_NAME)
-    }
-
-    @Test
-    fun testCompileShadersGracefulFallback() = kotlinx.coroutines.runBlocking {
-        // In unbound unit test environment, PrivilegeManager.exec returns ShellResult with transportError.
-        // With non-blocking fallback, compileShaders returns true.
-        val result = GameOptimizerEngine.compileShaders("com.example.game")
-        assertTrue(result)
+    fun testBuildConfigVersionIs108() {
+        assertEquals(108, com.optimizer.game.BuildConfig.VERSION_CODE)
+        assertEquals("1.0.8", com.optimizer.game.BuildConfig.VERSION_NAME)
     }
 }

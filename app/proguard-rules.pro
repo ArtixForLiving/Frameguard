@@ -14,11 +14,6 @@
     public static void main(java.lang.String[]);
 }
 
-# dadb library rules
--keep class dadb.** { *; }
--keep interface dadb.** { *; }
--dontwarn dadb.**
-
 # BouncyCastle cryptographic provider and ASN.1 / X.509 classes
 -keep class org.bouncycastle.asn1.** { *; }
 -keep class org.bouncycastle.cert.** { *; }

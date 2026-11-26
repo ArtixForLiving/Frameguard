@@ -3,6 +3,7 @@ package com.optimizer.game.optimizer
 import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.os.Build
 import android.view.Display
 import com.optimizer.game.privilege.PrivilegeManager
 import com.optimizer.game.privilege.ShellResult
@@ -12,15 +13,18 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withTimeoutOrNull
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * Utilitarian OS-level game optimizer executing ADB shell directives via PrivilegeBackend (UID 2000).
+ * Utilitarian OS-level game optimizer executing ADB shell directives via PrivilegeManager (UID 2000).
  * Strictly operates at system settings/binder level without modifying game files or injecting code.
  */
 object GameOptimizerEngine {
 
     const val DEFAULT_PACKAGE = "com.digitalextremes.warframemobile"
+    val VALID_DOWNSCALE_RATIOS = setOf("1.0", "0.85", "0.75", "0.6")
 
     private const val PREFS_GEOMETRY = "frameguard_geometry_snapshot"
     private const val KEY_HAS_SNAPSHOT = "has_snapshot"
@@ -31,6 +35,17 @@ object GameOptimizerEngine {
     private const val KEY_OVERRIDE_HEIGHT = "override_height"
     private const val KEY_OVERRIDE_DPI = "override_dpi"
     private const val KEY_ACTIVE_PACKAGE = "active_package"
+
+    private val PACKAGE_NAME_REGEX = Regex("""\A[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+\z""")
+    private val COMPONENT_NAME_REGEX = Regex("""\A[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+/\.?[a-zA-Z0-9_$]+(\.[a-zA-Z0-9_$]+)*\z""")
+    private val PHYSICAL_SIZE_REGEX = Regex("""Physical size:\s*(\d+)x(\d+)""", RegexOption.IGNORE_CASE)
+    private val OVERRIDE_SIZE_REGEX = Regex("""Override size:\s*(\d+)x(\d+)""", RegexOption.IGNORE_CASE)
+    private val PHYSICAL_DENSITY_REGEX = Regex("""Physical density:\s*(\d+)""", RegexOption.IGNORE_CASE)
+    private val OVERRIDE_DENSITY_REGEX = Regex("""Override density:\s*(\d+)""", RegexOption.IGNORE_CASE)
+
+    internal var commandExecutor: suspend (List<String>) -> ShellResult = { args ->
+        PrivilegeManager.execArgs(args)
+    }
 
     var activeSnapshot: DisplayGeometrySnapshot? = null
         private set
@@ -44,16 +59,30 @@ object GameOptimizerEngine {
         val overrideDpi: Int? = null
     )
 
-    fun parseWmGeometry(sizeOutput: String, densityOutput: String): DisplayGeometrySnapshot {
-        val physicalSizeMatch = Regex("""Physical size:\s*(\d+)x(\d+)""", RegexOption.IGNORE_CASE).find(sizeOutput)
-        val overrideSizeMatch = Regex("""Override size:\s*(\d+)x(\d+)""", RegexOption.IGNORE_CASE).find(sizeOutput)
+    internal fun isValidPackageName(pkg: String): Boolean {
+        if (pkg.isEmpty() || pkg.contains('\n') || pkg.contains('\r')) return false
+        return PACKAGE_NAME_REGEX.matches(pkg)
+    }
 
-        val physicalDensityMatch = Regex("""Physical density:\s*(\d+)""", RegexOption.IGNORE_CASE).find(densityOutput)
-        val overrideDensityMatch = Regex("""Override density:\s*(\d+)""", RegexOption.IGNORE_CASE).find(densityOutput)
+    internal fun parseSanitizedComponent(rawOutput: String): String? {
+        return rawOutput.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { line ->
+                line.isNotEmpty() && COMPONENT_NAME_REGEX.matches(line)
+            }
+    }
 
-        val pWidth = physicalSizeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1080
-        val pHeight = physicalSizeMatch?.groupValues?.get(2)?.toIntOrNull() ?: 2400
-        val pDpi = physicalDensityMatch?.groupValues?.get(1)?.toIntOrNull() ?: 420
+    fun parseWmGeometry(sizeOutput: String, densityOutput: String): DisplayGeometrySnapshot? {
+        val physicalSizeMatch = PHYSICAL_SIZE_REGEX.find(sizeOutput) ?: return null
+        val physicalDensityMatch = PHYSICAL_DENSITY_REGEX.find(densityOutput) ?: return null
+
+        val pWidth = physicalSizeMatch.groupValues[1].toIntOrNull() ?: return null
+        val pHeight = physicalSizeMatch.groupValues[2].toIntOrNull() ?: return null
+        val pDpi = physicalDensityMatch.groupValues[1].toIntOrNull() ?: return null
+        if (pWidth <= 0 || pHeight <= 0 || pDpi <= 0) return null
+
+        val overrideSizeMatch = OVERRIDE_SIZE_REGEX.find(sizeOutput)
+        val overrideDensityMatch = OVERRIDE_DENSITY_REGEX.find(densityOutput)
 
         val oWidth = overrideSizeMatch?.groupValues?.get(1)?.toIntOrNull()
         val oHeight = overrideSizeMatch?.groupValues?.get(2)?.toIntOrNull()
@@ -69,24 +98,45 @@ object GameOptimizerEngine {
         )
     }
 
-    fun buildRestoreCommands(snapshot: DisplayGeometrySnapshot?): List<String> {
+    internal fun buildRestoreCommandArgs(snapshot: DisplayGeometrySnapshot?): List<List<String>> {
         if (snapshot == null) return emptyList()
 
-        val commands = mutableListOf<String>()
-
+        val commands = mutableListOf<List<String>>()
         if (snapshot.overrideWidth != null && snapshot.overrideHeight != null) {
-            commands.add("wm size ${snapshot.overrideWidth}x${snapshot.overrideHeight}")
+            commands.add(listOf("wm", "size", "${snapshot.overrideWidth}x${snapshot.overrideHeight}"))
         } else {
-            commands.add("wm size reset")
+            commands.add(listOf("wm", "size", "reset"))
         }
 
         if (snapshot.overrideDpi != null) {
-            commands.add("wm density ${snapshot.overrideDpi}")
+            commands.add(listOf("wm", "density", snapshot.overrideDpi.toString()))
         } else {
-            commands.add("wm density reset")
+            commands.add(listOf("wm", "density", "reset"))
         }
 
         return commands
+    }
+
+    fun buildRestoreCommands(snapshot: DisplayGeometrySnapshot?): List<String> =
+        buildRestoreCommandArgs(snapshot).map { it.joinToString(" ") }
+
+    internal fun verifyWmRestored(
+        baseline: DisplayGeometrySnapshot,
+        sizeOutput: String,
+        densityOutput: String
+    ): Boolean {
+        val current = parseWmGeometry(sizeOutput, densityOutput) ?: return false
+        val sizeMatches = if (baseline.overrideWidth != null && baseline.overrideHeight != null) {
+            current.overrideWidth == baseline.overrideWidth && current.overrideHeight == baseline.overrideHeight
+        } else {
+            current.overrideWidth == null && current.overrideHeight == null
+        }
+        val densityMatches = if (baseline.overrideDpi != null) {
+            current.overrideDpi == baseline.overrideDpi
+        } else {
+            current.overrideDpi == null
+        }
+        return sizeMatches && densityMatches
     }
 
     fun saveGeometrySnapshot(context: Context, snapshot: DisplayGeometrySnapshot, activePackage: String) {
@@ -110,9 +160,12 @@ object GameOptimizerEngine {
         if (!prefs.getBoolean(KEY_HAS_SNAPSHOT, false)) {
             return null
         }
-        val pw = prefs.getInt(KEY_PHYSICAL_WIDTH, 1080)
-        val ph = prefs.getInt(KEY_PHYSICAL_HEIGHT, 2400)
-        val pd = prefs.getInt(KEY_PHYSICAL_DPI, 420)
+        val pw = prefs.getInt(KEY_PHYSICAL_WIDTH, -1)
+        val ph = prefs.getInt(KEY_PHYSICAL_HEIGHT, -1)
+        val pd = prefs.getInt(KEY_PHYSICAL_DPI, -1)
+        if (pw <= 0 || ph <= 0 || pd <= 0) {
+            return null
+        }
         val ow = if (prefs.contains(KEY_OVERRIDE_WIDTH)) prefs.getInt(KEY_OVERRIDE_WIDTH, 0) else null
         val oh = if (prefs.contains(KEY_OVERRIDE_HEIGHT)) prefs.getInt(KEY_OVERRIDE_HEIGHT, 0) else null
         val od = if (prefs.contains(KEY_OVERRIDE_DPI)) prefs.getInt(KEY_OVERRIDE_DPI, 0) else null
@@ -136,11 +189,14 @@ object GameOptimizerEngine {
         return prefs.getString(KEY_ACTIVE_PACKAGE, null)
     }
 
-    // Cached display refresh rates before applying profile
-    private var cachedPeakRefreshRate: String = "120.0"
-    private var cachedMinRefreshRate: String = "60.0"
+    // Cached display refresh rates before applying profile (null means unset / "null")
+    private var cachedPeakRefreshRate: String? = null
+    private var cachedMinRefreshRate: String? = null
     private var hasCachedRates = false
-    private var cachedAutoRotate: String? = null
+    private var cachedCurrentPeakHz: Float? = null
+    private var didEnableDnd = false
+
+    var dndCapabilityAllowed: Boolean = true
 
     var currentPackage: String = DEFAULT_PACKAGE
         private set
@@ -152,6 +208,15 @@ object GameOptimizerEngine {
         private set
 
     var currentRenderScale: Int = 100
+        private set
+
+    var currentDownscaleRatio: String = "1.0"
+        private set
+
+    var currentRamTrim: Boolean = true
+        private set
+
+    var currentDnd: Boolean = true
         private set
 
     private val _pairedRefreshRate = MutableStateFlow("120Hz")
@@ -203,7 +268,9 @@ object GameOptimizerEngine {
     }
 
     fun setTargetPackage(packageName: String) {
-        currentPackage = packageName
+        if (isValidPackageName(packageName)) {
+            currentPackage = packageName
+        }
     }
 
     fun setTargetFps(fps: Int) {
@@ -214,343 +281,698 @@ object GameOptimizerEngine {
         currentDoze = enabled
     }
 
+    fun setDownscaleRatio(ratio: String) {
+        currentDownscaleRatio = normalizeDownscaleRatio(ratio)
+    }
+
+    fun setRamTrimEnabled(enabled: Boolean) {
+        currentRamTrim = enabled
+    }
+
+    fun setDndEnabled(enabled: Boolean) {
+        currentDnd = enabled
+    }
+
     fun setPairedHz(hz: String) {
         _pairedRefreshRate.value = hz
+    }
+
+    internal fun normalizeDownscaleRatio(downscaleRatio: String): String =
+        if (downscaleRatio in VALID_DOWNSCALE_RATIOS) downscaleRatio else "1.0"
+
+    internal fun buildGameModeSetArgs(
+        packageName: String,
+        targetFps: Int,
+        downscaleRatio: String,
+        useDisableForNative: Boolean = true
+    ): List<String> {
+        val normalized = normalizeDownscaleRatio(downscaleRatio)
+        val downscaleArg = if (normalized == "1.0" && useDisableForNative) "disable" else normalized
+        return listOf(
+            "cmd", "game", "set",
+            "--mode", "2",
+            "--fps", targetFps.toString(),
+            "--downscale", downscaleArg,
+            packageName
+        )
+    }
+
+    private fun extractGamePackageBlock(dumpsysOutput: String, packageName: String): String? {
+        val prefix = "[Name:$packageName"
+        var searchFrom = 0
+        while (true) {
+            val start = dumpsysOutput.indexOf(prefix, startIndex = searchFrom)
+            if (start < 0) return null
+            val afterIdx = start + prefix.length
+            val boundaryOk = afterIdx >= dumpsysOutput.length ||
+                dumpsysOutput[afterIdx].isWhitespace() ||
+                dumpsysOutput[afterIdx] == ',' ||
+                dumpsysOutput[afterIdx] == ']'
+            if (!boundaryOk) {
+                searchFrom = afterIdx
+                continue
+            }
+            var depth = 0
+            for (i in start until dumpsysOutput.length) {
+                when (dumpsysOutput[i]) {
+                    '[' -> depth++
+                    ']' -> {
+                        depth--
+                        if (depth == 0) {
+                            return dumpsysOutput.substring(start, i + 1)
+                        }
+                    }
+                }
+            }
+            return dumpsysOutput.substring(start)
+        }
+    }
+
+    internal fun verifyGameManagerMode2(
+        dumpsysOutput: String,
+        packageName: String,
+        expectedFps: Int,
+        expectedDownscale: String?
+    ): Boolean {
+        val block = extractGamePackageBlock(dumpsysOutput, packageName) ?: return false
+        val mode2Match = Regex("""\b2\s*=\s*\[([^\]]*)\]""").find(block)
+        val mode2Body = mode2Match?.groupValues?.get(1)
+            ?: if (Regex("""Game Mode\s*:\s*2\b""", RegexOption.IGNORE_CASE).containsMatchIn(block)) block else return false
+
+        if (!Regex("""Game Mode\s*:\s*2\b""", RegexOption.IGNORE_CASE).containsMatchIn(mode2Body)) {
+            return false
+        }
+
+        val fpsMatch = Regex("""Fps\s*:\s*(\d+)""", RegexOption.IGNORE_CASE).find(mode2Body) ?: return false
+        if (fpsMatch.groupValues[1].toIntOrNull() != expectedFps) {
+            return false
+        }
+
+        if (expectedDownscale == null) {
+            return true
+        }
+
+        val scalingMatch = Regex("""Scaling\s*:\s*([0-9.-]+)""", RegexOption.IGNORE_CASE).find(mode2Body)
+        val actualScaling = scalingMatch?.groupValues?.get(1)?.toFloatOrNull()
+        return if (expectedDownscale == "1.0" || expectedDownscale.equals("disable", ignoreCase = true)) {
+            actualScaling == null || actualScaling <= 0f || abs(actualScaling - 1.0f) < 0.01f
+        } else {
+            val expectedFloat = expectedDownscale.toFloatOrNull() ?: return false
+            actualScaling != null && abs(actualScaling - expectedFloat) < 0.01f
+        }
+    }
+
+    internal fun verifyGameManagerClean(dumpsysOutput: String, packageName: String): Boolean {
+        val block = extractGamePackageBlock(dumpsysOutput, packageName) ?: return true
+        val hasMode2 = Regex("""\b2\s*=\s*\[[^\]]*\]""").containsMatchIn(block)
+        val hasMode3 = Regex("""\b3\s*=\s*\[[^\]]*\]""").containsMatchIn(block)
+        if (!hasMode2 && !hasMode3) return true
+
+        val activeFps = Regex("""Fps\s*:\s*(\d+)""", RegexOption.IGNORE_CASE)
+            .findAll(block)
+            .any { (it.groupValues[1].toIntOrNull() ?: 0) > 0 }
+        val activeScaling = Regex("""Scaling\s*:\s*([0-9.-]+)""", RegexOption.IGNORE_CASE)
+            .findAll(block)
+            .any {
+                val scaling = it.groupValues[1].toFloatOrNull() ?: -1f
+                scaling > 0f && abs(scaling - 1.0f) > 0.01f
+            }
+        return !hasMode2 && !activeFps && !activeScaling
+    }
+
+    internal fun parseRawRefreshRateSetting(rawOutput: String): String {
+        val trimmed = rawOutput.trim()
+        return if (trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true)) "null" else trimmed
+    }
+
+    internal fun buildRestoreRefreshRateArgs(key: String, cachedValue: String): List<String> {
+        val trimmed = cachedValue.trim()
+        return if (trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true)) {
+            listOf("settings", "delete", "system", key)
+        } else {
+            listOf("settings", "put", "system", key, trimmed)
+        }
+    }
+
+    internal fun resolveOptimalRefreshRate(targetFps: Int, supportedHz: List<Float>): Float {
+        if (supportedHz.isEmpty()) {
+            return when (targetFps) {
+                45, 90 -> 90f
+                40, 120 -> 120f
+                else -> 60f
+            }
+        }
+        val has60 = supportedHz.any { abs(it - 60f) < 1.5f }
+        val has90 = supportedHz.any { abs(it - 90f) < 1.5f }
+        val has120 = supportedHz.any { abs(it - 120f) < 1.5f }
+
+        return when (targetFps) {
+            45 -> when {
+                has90 -> 90f
+                has120 -> 120f
+                else -> 60f
+            }
+            40, 120 -> if (has120) 120f else 60f
+            90 -> if (has90) 90f else 60f
+            30, 60 -> if (has60) 60f else (supportedHz.minOrNull() ?: 60f)
+            else -> if (has90) 90f else 60f
+        }
+    }
+
+    internal fun buildRefreshRateLockSequence(targetHz: Float, currentMinHz: Float?): List<List<String>> {
+        val hzValue = String.format(Locale.US, "%.1f", targetHz)
+        val putMin = listOf("settings", "put", "system", "min_refresh_rate", hzValue)
+        val putPeak = listOf("settings", "put", "system", "peak_refresh_rate", hzValue)
+
+        val steppingDown = if (currentMinHz != null) {
+            targetHz < currentMinHz
+        } else {
+            targetHz <= 60f
+        }
+        return if (steppingDown) {
+            listOf(putMin, putPeak)
+        } else {
+            listOf(putPeak, putMin)
+        }
+    }
+
+    private fun buildOrderedRefreshRateRestore(
+        cachedPeak: String?,
+        cachedMin: String?
+    ): List<List<String>> {
+        val peakArgs = cachedPeak?.let { buildRestoreRefreshRateArgs("peak_refresh_rate", it) }
+        val minArgs = cachedMin?.let { buildRestoreRefreshRateArgs("min_refresh_rate", it) }
+
+        val deleteFirst = mutableListOf<List<String>>()
+        val putAfter = mutableListOf<List<String>>()
+
+        val minIsDelete = minArgs?.getOrNull(1) == "delete"
+        val peakIsDelete = peakArgs?.getOrNull(1) == "delete"
+
+        if (minIsDelete) deleteFirst.add(minArgs)
+        if (peakIsDelete) deleteFirst.add(peakArgs)
+
+        if (!minIsDelete && !peakIsDelete && minArgs != null && peakArgs != null) {
+            val peakNum = cachedPeak.toFloatOrNull()
+            val lockHz = cachedCurrentPeakHz
+            if (peakNum != null && lockHz != null && peakNum >= lockHz) {
+                putAfter.add(peakArgs)
+                putAfter.add(minArgs)
+            } else {
+                putAfter.add(minArgs)
+                putAfter.add(peakArgs)
+            }
+        } else {
+            if (!peakIsDelete && peakArgs != null) putAfter.add(peakArgs)
+            if (!minIsDelete && minArgs != null) putAfter.add(minArgs)
+        }
+
+        return deleteFirst + putAfter
+    }
+
+    private fun formatHzLabel(hz: Float): String = "${hz.roundToInt()}Hz"
+
+    private suspend fun getSupportedRefreshRates(context: Context?): List<Float> {
+        if (context != null) {
+            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+            val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
+            val modes = display?.supportedModes?.map { it.refreshRate }?.filter { it > 0f }
+            if (!modes.isNullOrEmpty()) return modes
+        }
+        val res = commandExecutor(listOf("dumpsys", "display"))
+        if (!res.isOk) return emptyList()
+        val parsed = mutableSetOf<Float>()
+        Regex("""(\d+(?:\.\d+)?)\s*fps""", RegexOption.IGNORE_CASE).findAll(res.stdout).forEach {
+            it.groupValues[1].toFloatOrNull()?.let(parsed::add)
+        }
+        Regex("""fps=(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE).findAll(res.stdout).forEach {
+            it.groupValues[1].toFloatOrNull()?.let(parsed::add)
+        }
+        return parsed.toList()
     }
 
     /**
      * Checks if a specific display refresh rate (e.g., 90Hz) is supported by the panel hardware.
      */
     suspend fun isRefreshRateSupported(hz: Int, context: Context?): Boolean {
-        if (context != null) {
-            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
-            val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
-            val supported = display?.supportedModes?.any { Math.round(it.refreshRate) == hz }
-            if (supported == true) return true
+        val supported = getSupportedRefreshRates(context)
+        return supported.any { abs(it - hz.toFloat()) < 1.5f }
+    }
+
+    private fun supportsGameManagerCli(): Boolean =
+        Build.VERSION.SDK_INT == 0 || Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
+    private suspend fun applyGameModeAndVerify(
+        packageName: String,
+        targetFps: Int,
+        downscaleRatio: String
+    ): Boolean {
+        if (!supportsGameManagerCli()) return false
+
+        val normalized = normalizeDownscaleRatio(downscaleRatio)
+        val primaryArgs = buildGameModeSetArgs(packageName, targetFps, normalized, useDisableForNative = true)
+        log(primaryArgs.joinToString(" "), LogType.COMMAND)
+        var setRes = commandExecutor(primaryArgs)
+        if (setRes.stdout.isNotBlank()) log(setRes.stdout, LogType.STDOUT)
+
+        if (normalized == "1.0" && !setRes.isOk) {
+            val fallbackArgs = buildGameModeSetArgs(packageName, targetFps, normalized, useDisableForNative = false)
+            log(fallbackArgs.joinToString(" "), LogType.COMMAND)
+            setRes = commandExecutor(fallbackArgs)
+            if (setRes.stdout.isNotBlank()) log(setRes.stdout, LogType.STDOUT)
         }
-        val out = PrivilegeManager.exec("dumpsys display").stdout
-        return out.contains("${hz}.0 fps", ignoreCase = true) ||
-                out.contains("${hz}fps", ignoreCase = true) ||
-                out.contains("fps=${hz}", ignoreCase = true)
+        if (!setRes.isOk && setRes.stderr.isNotBlank()) {
+            log(setRes.stderr, LogType.ERROR)
+        }
+
+        val modeArgs = listOf("cmd", "game", "mode", "2", packageName)
+        log(modeArgs.joinToString(" "), LogType.COMMAND)
+        val modeRes = commandExecutor(modeArgs)
+        if (modeRes.stdout.isNotBlank()) log(modeRes.stdout, LogType.STDOUT)
+        if (!modeRes.isOk && modeRes.stderr.isNotBlank()) {
+            log(modeRes.stderr, LogType.ERROR)
+        }
+
+        val dumpRes = commandExecutor(listOf("dumpsys", "game"))
+        val expectedDownscale = if (normalized == "1.0") null else normalized
+        val verified = setRes.isOk &&
+            modeRes.isOk &&
+            dumpRes.isOk &&
+            verifyGameManagerMode2(dumpRes.stdout, packageName, targetFps, expectedDownscale)
+        if (!verified) {
+            log("GameManager Mode 2 verification failed for $packageName", LogType.INFO)
+        }
+        return verified
+    }
+
+    private suspend fun applyRefreshRateLock(optimalHz: Float) {
+        var currentMinHz: Float? = null
+        if (!hasCachedRates) {
+            val peakRes = commandExecutor(listOf("settings", "get", "system", "peak_refresh_rate"))
+            val minRes = commandExecutor(listOf("settings", "get", "system", "min_refresh_rate"))
+            if (peakRes.isOk && minRes.isOk) {
+                cachedPeakRefreshRate = parseRawRefreshRateSetting(peakRes.stdout)
+                cachedMinRefreshRate = parseRawRefreshRateSetting(minRes.stdout)
+                hasCachedRates = true
+                currentMinHz = cachedMinRefreshRate?.toFloatOrNull()
+                log("Cached display refresh rates: peak=$cachedPeakRefreshRate min=$cachedMinRefreshRate", LogType.INFO)
+            } else {
+                log("Failed to read system refresh rate baseline; skip caching", LogType.ERROR)
+            }
+        } else {
+            val minRes = commandExecutor(listOf("settings", "get", "system", "min_refresh_rate"))
+            if (minRes.isOk) {
+                currentMinHz = minRes.stdout.trim().toFloatOrNull()
+            }
+        }
+
+        cachedCurrentPeakHz = optimalHz
+        for (args in buildRefreshRateLockSequence(optimalHz, currentMinHz)) {
+            log(args.joinToString(" "), LogType.COMMAND)
+            val hzRes = commandExecutor(args)
+            if (!hzRes.isOk && hzRes.stderr.isNotBlank()) {
+                log(hzRes.stderr, LogType.ERROR)
+            }
+        }
     }
 
     /**
-     * Executes an ART profile compilation targeting hot methods for the game APK.
-     * cmd package compile -m speed -f <packageName>
+     * Updates GameManager Mode 2 (--fps + --downscale) and display Hz limits without force-stopping
+     * the running game or re-scaling WindowManager geometry.
      */
-    suspend fun compileShaders(
+    suspend fun updateLiveGameConfig(
         packageName: String = currentPackage,
-        onProgress: suspend (step: Int, total: Int, status: String) -> Unit = { _, _, _ -> }
+        targetFps: Int,
+        downscaleRatio: String = currentDownscaleRatio,
+        context: Context? = null
     ): Boolean {
-        log("cmd package compile -m speed -f $packageName", LogType.COMMAND)
-        onProgress(1, 4, "Verifying dex metadata and dependencies...")
-        log("dex2oat: verifying primary.vdex", LogType.INFO)
-
-        val res = try {
-            withTimeoutOrNull(120_000L) {
-                PrivilegeManager.exec("cmd package compile -m speed -f $packageName")
-            } ?: ShellResult(
-                exitCode = -1,
-                stdout = "",
-                stderr = "",
-                timedOut = true,
-                transportError = "dex2oat compilation timed out after 120s"
-            )
-        } catch (e: Exception) {
-            ShellResult(
-                exitCode = -1,
-                stdout = "",
-                stderr = "",
-                transportError = e.message ?: "dex2oat compilation failed"
-            )
+        if (!isValidPackageName(packageName)) {
+            log("Rejected invalid package name: $packageName", LogType.ERROR)
+            return false
         }
-        val output = if (res.transportError != null) {
-            "ERROR: ${res.transportError}"
-        } else {
-            res.stdout.ifBlank { res.stderr }
-        }
-        val isSuccess = res.isOk && res.stdout.contains("Success", ignoreCase = true)
-        log(output, if (isSuccess) LogType.STDOUT else LogType.INFO)
+        val normalizedDownscale = normalizeDownscaleRatio(downscaleRatio)
+        currentPackage = packageName
+        currentFps = targetFps
+        currentDownscaleRatio = normalizedDownscale
 
-        onProgress(2, 4, "Optimizing bytecode and compiling hot methods (speed)...")
-        log("dex2oat: compiling hot methods (speed)", LogType.INFO)
+        val supportedHz = getSupportedRefreshRates(context)
+        val optimalHz = resolveOptimalRefreshRate(targetFps, supportedHz)
+        val pairedLabel = formatHzLabel(optimalHz)
+        _pairedRefreshRate.value = pairedLabel
 
-        onProgress(3, 4, "Writing compiled oat artifacts to system cache...")
-        log("dex2oat: writing oat artifact to /data/dalvik-cache", LogType.INFO)
-
-        if (isSuccess) {
-            onProgress(4, 4, "Success (exit=0)")
-            log("Success (exit=0)", LogType.STDOUT)
-        } else {
-            log("> dex2oat: speed compilation deferred or incomplete (non-blocking)", LogType.STDOUT)
-            onProgress(4, 4, "Completed (fallback)")
-        }
-
-        return true
+        val gameVerified = applyGameModeAndVerify(packageName, targetFps, normalizedDownscale)
+        applyRefreshRateLock(optimalHz)
+        log("Live config updated: $targetFps FPS / downscale=$normalizedDownscale / $pairedLabel", LogType.STDOUT)
+        return gameVerified
     }
 
     /**
      * Applies the Cool & Stable thermal/pacing profile:
-     * 1. Force-stops target package so SurfaceFlinger applies overlay rules cleanly on launch.
-     * 2. Locks Android 15/16 DeviceConfig background sync during active session.
-     * 3. Sets game_overlay FPS limit configuration.
-     * 4. Calculates exact integer divisor refresh rate (30->60Hz, 40->120Hz, 45->90Hz fallback 40@120Hz, 60->60Hz).
-     * 5. Caches original system refresh rates.
-     * 6. Sets game mode and FPS cap via GameManagerService.
-     * 7. Locks display refresh rate to optimal integer multiple.
-     * 8. Forces device deep doze (if enabled).
-     * 9. Launches the target game via monkey intent launcher.
+     * 1. Force-stops target package so GameManager applies rules cleanly on cold launch.
+     * 2. Optionally configures experimental WM display scaling (only when no active snapshot exists).
+     * 3. Validates target Hz against Display.supportedModes and caches raw system refresh rates.
+     * 4. Sets GameManager Mode 2 with --fps and --downscale simultaneously and verifies via dumpsys game.
+     * 5. Locks display refresh rate in min/peak order safe for LTPO panels.
+     * 6. Runs safe RAM trim (am kill-all) if enabled.
+     * 7. Enables Auto Gaming DND if enabled and zen_mode == 0.
+     * 8. Launches target game via framework Intent (with BAL try/catch) or sanitized am start fallback.
      */
     suspend fun applyProfile(
         packageName: String = currentPackage,
         targetFps: Int = currentFps,
-        doze: Boolean = currentDoze,
+        @Suppress("UNUSED_PARAMETER") doze: Boolean = currentDoze,
         renderScale: Int = currentRenderScale,
-        context: Context? = null
+        context: Context? = null,
+        downscaleRatio: String = currentDownscaleRatio,
+        ramTrim: Boolean = currentRamTrim,
+        dnd: Boolean = currentDnd
     ): Boolean {
+        if (!isValidPackageName(packageName)) {
+            log("Rejected invalid package name: $packageName", LogType.ERROR)
+            return false
+        }
+
+        val normalizedDownscale = normalizeDownscaleRatio(downscaleRatio)
         currentPackage = packageName
-        currentDoze = doze
-        currentRenderScale = renderScale
+        currentFps = targetFps
+        currentDownscaleRatio = normalizedDownscale
+        currentRamTrim = ramTrim
+        currentDnd = dnd
 
-        // 1. Force-stop target package first so SurfaceFlinger applies overlay rule cleanly on cold start
-        val stopCmd = "am force-stop $packageName"
-        log(stopCmd, LogType.COMMAND)
-        val stopOut = PrivilegeManager.exec(stopCmd).stdout
-        if (stopOut.isNotBlank()) log(stopOut, LogType.STDOUT)
+        // 1. Force-stop target package first so GameManager applies rule cleanly on cold start
+        val stopArgs = listOf("am", "force-stop", packageName)
+        log(stopArgs.joinToString(" "), LogType.COMMAND)
+        val stopRes = commandExecutor(stopArgs)
+        if (stopRes.stdout.isNotBlank()) log(stopRes.stdout, LogType.STDOUT)
 
-        // 2. Pre-launch swapchain display scaling if renderScale < 100
+        // 2. Experimental pre-launch WM display scaling if renderScale < 100
         if (renderScale < 100) {
-            val sizeOut = PrivilegeManager.exec("wm size").stdout
-            val densityOut = PrivilegeManager.exec("wm density").stdout
-            val snapshot = parseWmGeometry(sizeOut, densityOut)
-            activeSnapshot = snapshot
-            if (context != null) {
-                saveGeometrySnapshot(context, snapshot, packageName)
+            val existingSnapshot = context?.let { loadGeometrySnapshot(it) } ?: activeSnapshot
+            val snapshot = if (existingSnapshot != null) {
+                activeSnapshot = existingSnapshot
+                existingSnapshot
+            } else {
+                val sizeRes = commandExecutor(listOf("wm", "size"))
+                val densityRes = commandExecutor(listOf("wm", "density"))
+                val parsed = if (sizeRes.isOk && densityRes.isOk) {
+                    parseWmGeometry(sizeRes.stdout, densityRes.stdout)
+                } else {
+                    null
+                }
+                if (parsed == null) {
+                    log("WM snapshot capture failed; aborting experimental display scaling", LogType.ERROR)
+                    currentRenderScale = 100
+                    null
+                } else {
+                    activeSnapshot = parsed
+                    if (context != null) {
+                        saveGeometrySnapshot(context, parsed, packageName)
+                    }
+                    parsed
+                }
             }
 
-            val baseWidth = snapshot.overrideWidth ?: snapshot.physicalWidth
-            val baseHeight = snapshot.overrideHeight ?: snapshot.physicalHeight
-            val baseDpi = snapshot.overrideDpi ?: snapshot.physicalDpi
-            val metrics = computeScaledMetrics(renderScale, baseWidth, baseHeight, baseDpi)
+            if (snapshot != null) {
+                val baseWidth = snapshot.overrideWidth ?: snapshot.physicalWidth
+                val baseHeight = snapshot.overrideHeight ?: snapshot.physicalHeight
+                val baseDpi = snapshot.overrideDpi ?: snapshot.physicalDpi
+                val metrics = computeScaledMetrics(renderScale, baseWidth, baseHeight, baseDpi)
 
-            val sizeCmd = "wm size ${metrics.width}x${metrics.height}"
-            log(sizeCmd, LogType.COMMAND)
-            val sizeRes = PrivilegeManager.exec(sizeCmd).stdout
-            if (sizeRes.isNotBlank()) log(sizeRes, LogType.STDOUT)
+                val sizeArgs = listOf("wm", "size", "${metrics.width}x${metrics.height}")
+                log(sizeArgs.joinToString(" "), LogType.COMMAND)
+                val setSizeRes = commandExecutor(sizeArgs)
+                if (setSizeRes.stdout.isNotBlank()) log(setSizeRes.stdout, LogType.STDOUT)
 
-            val densityCmd = "wm density ${metrics.dpi}"
-            log(densityCmd, LogType.COMMAND)
-            val densityRes = PrivilegeManager.exec(densityCmd).stdout
-            if (densityRes.isNotBlank()) log(densityRes, LogType.STDOUT)
+                val densityArgs = listOf("wm", "density", metrics.dpi.toString())
+                log(densityArgs.joinToString(" "), LogType.COMMAND)
+                val setDensityRes = commandExecutor(densityArgs)
+                if (setDensityRes.stdout.isNotBlank()) log(setDensityRes.stdout, LogType.STDOUT)
 
-            log("Render scale pre-launch configured: ${renderScale}% (${metrics.width}x${metrics.height} @ ${metrics.dpi}dpi)", LogType.INFO)
-        }
-
-        // 3. Lock Android 15/16 DeviceConfig background sync
-        val syncLockCmd = "device_config set_sync_disabled_for_tests until_reboot"
-        log(syncLockCmd, LogType.COMMAND)
-        val syncLockOut = PrivilegeManager.exec(syncLockCmd).stdout
-        if (syncLockOut.isNotBlank()) log(syncLockOut, LogType.STDOUT)
-
-        // 3. Configure game_overlay FPS rule
-        var effectiveFps = targetFps
-        val optimalHz = when (targetFps) {
-            60 -> "60.0"
-            90 -> {
-                val has90Hz = isRefreshRateSupported(90, context)
-                if (has90Hz) "90.0" else "60.0"
+                if (setSizeRes.isOk && setDensityRes.isOk) {
+                    currentRenderScale = renderScale
+                    log(
+                        "Render scale pre-launch configured: ${renderScale}% (${metrics.width}x${metrics.height} @ ${metrics.dpi}dpi)",
+                        LogType.INFO
+                    )
+                } else {
+                    log("WM scaling command failed; aborting display scaling", LogType.ERROR)
+                    currentRenderScale = 100
+                }
             }
-            120 -> "120.0"
-            30 -> "60.0"
-            40 -> "120.0"
-            45 -> "90.0"
-            else -> "90.0"
+        } else {
+            currentRenderScale = 100
         }
-        currentFps = effectiveFps
-        val pairedLabel = "${optimalHz.substringBefore(".")}Hz"
+
+        // 3. Validate target Hz against panel supportedModes
+        val supportedHz = getSupportedRefreshRates(context)
+        val optimalHz = resolveOptimalRefreshRate(targetFps, supportedHz)
+        val pairedLabel = formatHzLabel(optimalHz)
         _pairedRefreshRate.value = pairedLabel
 
-        val overlayCmd = "device_config put game_overlay $packageName mode=2,fps=$effectiveFps:mode=3,fps=$effectiveFps"
-        log(overlayCmd, LogType.COMMAND)
-        val overlayOut = PrivilegeManager.exec(overlayCmd).stdout
-        if (overlayOut.isNotBlank()) log(overlayOut, LogType.STDOUT)
+        // 4. Configure GameManager Mode 2 (--fps + --downscale) & verify via dumpsys game
+        val gameVerified = applyGameModeAndVerify(packageName, targetFps, normalizedDownscale)
 
-        // 4. Cache current refresh rates if not already saved
-        if (!hasCachedRates) {
-            val peakRes = PrivilegeManager.exec("settings get system peak_refresh_rate")
-            val minRes = PrivilegeManager.exec("settings get system min_refresh_rate")
-            val peak = peakRes.stdout.trim()
-            val min = minRes.stdout.trim()
+        // 5. Cache raw refresh rates and apply LTPO-safe refresh rate lock
+        applyRefreshRateLock(optimalHz)
 
-            cachedPeakRefreshRate = if (peakRes.isOk && peak.isNotEmpty() && peak != "null") peak else "120.0"
-            cachedMinRefreshRate = if (minRes.isOk && min.isNotEmpty() && min != "null") min else "60.0"
-            hasCachedRates = true
-            log("Cached display refresh rates: peak=$cachedPeakRefreshRate min=$cachedMinRefreshRate", LogType.INFO)
+        // 6. Safe background RAM trim before launch
+        if (ramTrim) {
+            val killArgs = listOf("am", "kill-all")
+            log(killArgs.joinToString(" "), LogType.COMMAND)
+            val killRes = commandExecutor(killArgs)
+            if (killRes.stdout.isNotBlank()) log(killRes.stdout, LogType.STDOUT)
         }
 
-        // Cache user auto-rotate state so it is never permanently flipped
-        if (cachedAutoRotate == null) {
-            cachedAutoRotate = parseAutoRotateState(
-                PrivilegeManager.exec("settings get system accelerometer_rotation").stdout
-            )
+        // 7. Auto Gaming DND (only if zen_mode is currently 0)
+        if (dnd && dndCapabilityAllowed && !didEnableDnd) {
+            val zenRes = commandExecutor(listOf("settings", "get", "global", "zen_mode"))
+            if (zenRes.isOk && zenRes.stdout.trim() == "0") {
+                val dndArgs = listOf("cmd", "notification", "set_dnd", "priority")
+                log(dndArgs.joinToString(" "), LogType.COMMAND)
+                val dndRes = commandExecutor(dndArgs)
+                if (dndRes.isOk) {
+                    didEnableDnd = true
+                } else if (dndRes.stderr.isNotBlank()) {
+                    log(dndRes.stderr, LogType.ERROR)
+                }
+            }
         }
 
-        // 5. Set custom mode intervention config and activate Game Mode
-        val gameSetCmd = "cmd game set --mode 2 --fps $effectiveFps $packageName"
-        log(gameSetCmd, LogType.COMMAND)
-        val gameSetOut = PrivilegeManager.exec(gameSetCmd).stdout
-        if (gameSetOut.isNotBlank()) log(gameSetOut, LogType.STDOUT)
-
-        val gameModeCmd = "cmd game mode custom $packageName"
-        log(gameModeCmd, LogType.COMMAND)
-        val gameModeOut = PrivilegeManager.exec(gameModeCmd).stdout
-        if (gameModeOut.isNotBlank()) log(gameModeOut, LogType.STDOUT)
-
-        // 6. Lock display refresh rate to optimal integer multiple
-        val peakCmd = "settings put system peak_refresh_rate $optimalHz"
-        val minCmd = "settings put system min_refresh_rate $optimalHz"
-        log(peakCmd, LogType.COMMAND)
-        PrivilegeManager.exec(peakCmd)
-        log(minCmd, LogType.COMMAND)
-        PrivilegeManager.exec(minCmd)
-
-        // 7. Force Deep Doze if requested
-        if (doze) {
-            val dozeCmd = "dumpsys deviceidle force-idle"
-            log(dozeCmd, LogType.COMMAND)
-            val dozeOut = PrivilegeManager.exec(dozeCmd).stdout
-            if (dozeOut.isNotBlank()) log(dozeOut, LogType.STDOUT)
-        }
-
-        // 8. Launch target game via framework Intent (eliminates monkey which forces auto-rotate ON)
+        // 8. Launch target game via framework Intent (with BAL try/catch) or sanitized am start
         var launched = false
         if (context != null) {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
-                log("Launched $packageName via framework Launch Intent", LogType.INFO)
-                launched = true
+            try {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(launchIntent)
+                    log("Launched $packageName via framework Launch Intent", LogType.INFO)
+                    launched = true
+                }
+            } catch (e: Exception) {
+                log("Framework launch blocked (${e.javaClass.simpleName}); falling back to am start", LogType.INFO)
+                launched = false
             }
         }
         if (!launched) {
-            val resolveOut = PrivilegeManager.exec("cmd package resolve-activity --brief $packageName").stdout
-            val component = resolveOut.lines().firstOrNull { it.contains("/") && !it.contains("=") }?.trim()
-            if (!component.isNullOrEmpty()) {
-                val startCmd = "am start -n $component"
-                log(startCmd, LogType.COMMAND)
-                val startOut = PrivilegeManager.exec(startCmd).stdout
-                if (startOut.isNotBlank()) log(startOut, LogType.STDOUT)
+            val resolveArgs = listOf("cmd", "package", "resolve-activity", "--brief", packageName)
+            val resolveRes = commandExecutor(resolveArgs)
+            val component = if (resolveRes.isOk) parseSanitizedComponent(resolveRes.stdout) else null
+            val startArgs = if (component != null) {
+                listOf("am", "start", "-n", component)
             } else {
-                val startCmd = "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName"
-                log(startCmd, LogType.COMMAND)
-                val startOut = PrivilegeManager.exec(startCmd).stdout
-                if (startOut.isNotBlank()) log(startOut, LogType.STDOUT)
+                listOf(
+                    "am", "start",
+                    "-a", "android.intent.action.MAIN",
+                    "-c", "android.intent.category.LAUNCHER",
+                    "-p", packageName
+                )
             }
+            log(startArgs.joinToString(" "), LogType.COMMAND)
+            val startRes = commandExecutor(startArgs)
+            if (startRes.stdout.isNotBlank()) log(startRes.stdout, LogType.STDOUT)
         }
 
-        log("Profile engaged successfully: Cap $effectiveFps FPS / $pairedLabel (Sync Locked)", LogType.STDOUT)
+        log(
+            "Profile engaged: Cap $targetFps FPS / $pairedLabel (Mode2Verified=$gameVerified)",
+            LogType.STDOUT
+        )
         return true
     }
 
     /**
-     * Restores system defaults and disengages optimization profile.
+     * Restores system defaults and disengages optimization profile with closed-loop verification.
      */
     suspend fun restoreDefaults(
         packageName: String = currentPackage,
         context: Context? = null
     ): Boolean {
-        // 0. Reset display render scale using persistent snapshot or in-memory snapshot
+        if (!isValidPackageName(packageName)) {
+            log("Rejected invalid package name on restore: $packageName", LogType.ERROR)
+            return false
+        }
+
+        // 0. Reset display render scale and clear snapshot only after verified restored
+        var geometryClean = true
         val snapshot = context?.let { loadGeometrySnapshot(it) } ?: activeSnapshot
         if (snapshot != null) {
-            val restoreCmds = buildRestoreCommands(snapshot)
-            for (cmd in restoreCmds) {
-                log(cmd, LogType.COMMAND)
-                val out = PrivilegeManager.exec(cmd).stdout
-                if (out.isNotBlank()) log(out, LogType.STDOUT)
+            var commandsOk = true
+            for (args in buildRestoreCommandArgs(snapshot)) {
+                log(args.joinToString(" "), LogType.COMMAND)
+                val res = commandExecutor(args)
+                if (res.stdout.isNotBlank()) log(res.stdout, LogType.STDOUT)
+                if (!res.isOk) commandsOk = false
             }
-            if (context != null) {
-                clearGeometrySnapshot(context)
+            val verifySizeRes = commandExecutor(listOf("wm", "size"))
+            val verifyDensityRes = commandExecutor(listOf("wm", "density"))
+            val verified = commandsOk &&
+                verifySizeRes.isOk &&
+                verifyDensityRes.isOk &&
+                verifyWmRestored(snapshot, verifySizeRes.stdout, verifyDensityRes.stdout)
+            if (verified) {
+                if (context != null) {
+                    clearGeometrySnapshot(context)
+                }
+                activeSnapshot = null
+                currentRenderScale = 100
+            } else {
+                geometryClean = false
+                log("WM geometry restore verification failed; retaining snapshot for recovery", LogType.ERROR)
             }
-            activeSnapshot = null
         } else if (currentRenderScale < 100) {
-            val resetSizeCmd = "wm size reset"
-            log(resetSizeCmd, LogType.COMMAND)
-            val resetSizeOut = PrivilegeManager.exec(resetSizeCmd).stdout
-            if (resetSizeOut.isNotBlank()) log(resetSizeOut, LogType.STDOUT)
-
-            val resetDensityCmd = "wm density reset"
-            log(resetDensityCmd, LogType.COMMAND)
-            val resetDensityOut = PrivilegeManager.exec(resetDensityCmd).stdout
-            if (resetDensityOut.isNotBlank()) log(resetDensityOut, LogType.STDOUT)
-        }
-        currentRenderScale = 100
-
-        // 1. Release Deep Doze
-        val unforceCmd = "dumpsys deviceidle unforce"
-        log(unforceCmd, LogType.COMMAND)
-        val unforceOut = PrivilegeManager.exec(unforceCmd).stdout
-        if (unforceOut.isNotBlank()) log(unforceOut, LogType.STDOUT)
-
-        // 2. Remove game_overlay intervention and restore sync
-        val deleteOverlayCmd = "device_config delete game_overlay $packageName"
-        log(deleteOverlayCmd, LogType.COMMAND)
-        val deleteOverlayOut = PrivilegeManager.exec(deleteOverlayCmd).stdout
-        if (deleteOverlayOut.isNotBlank()) log(deleteOverlayOut, LogType.STDOUT)
-
-        val unlockSyncCmd = "device_config set_sync_disabled_for_tests none"
-        log(unlockSyncCmd, LogType.COMMAND)
-        val unlockSyncOut = PrivilegeManager.exec(unlockSyncCmd).stdout
-        if (unlockSyncOut.isNotBlank()) log(unlockSyncOut, LogType.STDOUT)
-
-        // 3. Reset game mode to STANDARD (1)
-        val resetGameCmd = "cmd game mode 1 $packageName"
-        log(resetGameCmd, LogType.COMMAND)
-        val resetOut = PrivilegeManager.exec(resetGameCmd).stdout
-        if (resetOut.isNotBlank()) log(resetOut, LogType.STDOUT)
-
-        // 4. Restore cached or default refresh rates
-        val restorePeakCmd = "settings put system peak_refresh_rate $cachedPeakRefreshRate"
-        val restoreMinCmd = "settings put system min_refresh_rate $cachedMinRefreshRate"
-        log(restorePeakCmd, LogType.COMMAND)
-        PrivilegeManager.exec(restorePeakCmd)
-        log(restoreMinCmd, LogType.COMMAND)
-        PrivilegeManager.exec(restoreMinCmd)
-
-        _pairedRefreshRate.value = "120Hz"
-        log("System defaults restored (Refresh Rate=$cachedPeakRefreshRate, Sync Lock released)", LogType.STDOUT)
-        hasCachedRates = false
-
-        // 5. Restore user auto-rotate state if cached
-        buildRestoreAutoRotateCommand(cachedAutoRotate)?.let { restoreRotateCmd ->
-            log(restoreRotateCmd, LogType.COMMAND)
-            PrivilegeManager.exec(restoreRotateCmd)
-        }
-        cachedAutoRotate = null
-        return true
-    }
-
-    internal fun parseAutoRotateState(rawOutput: String): String? {
-        val trimmed = rawOutput.trim()
-        return if (trimmed == "0" || trimmed == "1") trimmed else null
-    }
-
-    internal fun buildRestoreAutoRotateCommand(cachedValue: String?): String? {
-        return if (cachedValue == "0" || cachedValue == "1") {
-            "settings put system accelerometer_rotation $cachedValue"
+            val sizeRes = commandExecutor(listOf("wm", "size", "reset"))
+            val densityRes = commandExecutor(listOf("wm", "density", "reset"))
+            if (sizeRes.isOk && densityRes.isOk) {
+                currentRenderScale = 100
+            } else {
+                geometryClean = false
+            }
         } else {
-            null
+            currentRenderScale = 100
         }
+
+        // 1. Reset GameManager interventions and confirm clean via dumpsys game
+        var gameClean = true
+        if (supportsGameManagerCli()) {
+            val resetArgs = listOf("cmd", "game", "reset", packageName)
+            log(resetArgs.joinToString(" "), LogType.COMMAND)
+            val resetRes = commandExecutor(resetArgs)
+            if (resetRes.stdout.isNotBlank()) log(resetRes.stdout, LogType.STDOUT)
+            val dumpRes = commandExecutor(listOf("dumpsys", "game"))
+            gameClean = resetRes.isOk && dumpRes.isOk && verifyGameManagerClean(dumpRes.stdout, packageName)
+            if (!gameClean) {
+                log("GameManager reset verification failed for $packageName", LogType.ERROR)
+            }
+        }
+
+        // 2. Restore cached refresh rates (preserving "null" via settings delete)
+        var ratesClean = true
+        if (hasCachedRates) {
+            val restoreArgsList = buildOrderedRefreshRateRestore(cachedPeakRefreshRate, cachedMinRefreshRate)
+            for (args in restoreArgsList) {
+                log(args.joinToString(" "), LogType.COMMAND)
+                val res = commandExecutor(args)
+                if (!res.isOk) ratesClean = false
+            }
+            if (ratesClean) {
+                cachedPeakRefreshRate = null
+                cachedMinRefreshRate = null
+                cachedCurrentPeakHz = null
+                hasCachedRates = false
+            }
+        }
+        _pairedRefreshRate.value = "120Hz"
+
+        // 3. Restore Auto Gaming DND if enabled by FrameGuard
+        var dndClean = true
+        if (didEnableDnd) {
+            val dndOffArgs = listOf("cmd", "notification", "set_dnd", "off")
+            log(dndOffArgs.joinToString(" "), LogType.COMMAND)
+            val dndRes = commandExecutor(dndOffArgs)
+            if (dndRes.isOk) {
+                didEnableDnd = false
+            } else {
+                dndClean = false
+                log("Failed to disable Auto Gaming DND", LogType.ERROR)
+            }
+        }
+
+        val allClean = geometryClean && gameClean && ratesClean && dndClean
+        log(
+            if (allClean) "System defaults restored cleanly" else "System defaults partially restored (verification pending)",
+            if (allClean) LogType.STDOUT else LogType.ERROR
+        )
+        return allClean
+    }
+
+    internal fun parseThermalHalTemperature(dumpsysOutput: String): Float? {
+        val afterHeader = dumpsysOutput.substringAfter("Current temperatures from HAL:", "")
+        if (afterHeader.isEmpty()) return null
+
+        val halLines = afterHeader.lines()
+            .drop(1)
+            .takeWhile { line ->
+                val trimmed = line.trim()
+                trimmed.isEmpty() || trimmed.startsWith("Temperature{")
+            }
+            .joinToString("\n")
+        if (halLines.isBlank()) return null
+
+        val tempRegex = Regex("""Temperature\{mValue=([0-9.-]+),\s*mType=(-?\d+),\s*mName=([^,\s}]+)""")
+        val readings = tempRegex.findAll(halLines).mapNotNull { match ->
+            val value = match.groupValues[1].toFloatOrNull() ?: return@mapNotNull null
+            val type = match.groupValues[2].toIntOrNull()
+            val name = match.groupValues[3]
+            if (value.isNaN() || value <= -50f || value >= 150f) return@mapNotNull null
+            Triple(value, type, name)
+        }.toList()
+
+        if (readings.isEmpty()) {
+            val skinMatch = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=SKIN\b""", RegexOption.IGNORE_CASE).find(halLines)
+            if (skinMatch != null) return skinMatch.groupValues[1].toFloatOrNull()
+            val socMatch = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=SOC\b""", RegexOption.IGNORE_CASE).find(halLines)
+            if (socMatch != null) return socMatch.groupValues[1].toFloatOrNull()
+            return null
+        }
+
+        // Priority 1: SKIN (mName=SKIN or TYPE_SKIN == 3)
+        readings.firstOrNull { it.third.equals("SKIN", ignoreCase = true) }?.let { return it.first }
+        readings.firstOrNull { it.second == 3 }?.let { return it.first }
+
+        // Priority 2: SOC (mName=SOC, contains SOC, CPU, or TYPE_CPU == 0)
+        readings.firstOrNull { it.third.equals("SOC", ignoreCase = true) }?.let { return it.first }
+        readings.firstOrNull { it.third.contains("SOC", ignoreCase = true) }?.let { return it.first }
+        readings.firstOrNull { it.third.equals("CPU", ignoreCase = true) || it.second == 0 }?.let { return it.first }
+
+        return null
     }
 
     /**
-     * Reads battery temperature via dumpsys battery (accessible to UID 2000).
-     * Returns temperature in Celsius (e.g. 41.8).
+     * Reads live SKIN/SOC temperature from ThermalHAL (`dumpsys thermalservice`) under
+     * `Current temperatures from HAL:`, ignoring cached readings and returning null if unavailable.
      */
     suspend fun queryThermalReading(): Float? {
-        val res = PrivilegeManager.exec("dumpsys battery")
+        val res = commandExecutor(listOf("dumpsys", "thermalservice"))
         if (!res.isOk) return null
-        val tempLine = res.stdout.lines().firstOrNull { it.contains("temperature:", ignoreCase = true) }
-        return tempLine?.substringAfter("temperature:")?.trim()?.toFloatOrNull()?.let { it / 10f }
+        return parseThermalHalTemperature(res.stdout)
+    }
+
+    internal fun resetStateForTesting() {
+        activeSnapshot = null
+        cachedPeakRefreshRate = null
+        cachedMinRefreshRate = null
+        cachedCurrentPeakHz = null
+        hasCachedRates = false
+        didEnableDnd = false
+        dndCapabilityAllowed = true
+        currentPackage = DEFAULT_PACKAGE
+        currentFps = 45
+        currentDoze = true
+        currentRenderScale = 100
+        currentDownscaleRatio = "1.0"
+        currentRamTrim = true
+        currentDnd = true
+        _pairedRefreshRate.value = "120Hz"
+        commandExecutor = { args -> PrivilegeManager.execArgs(args) }
     }
 }
