@@ -40,7 +40,7 @@
             android:paddingVertical="2dp" />
     </LinearLayout>
 
-    <!-- Telemetry Row: Temp, Doze, Privilege -->
+    <!-- Telemetry Row: Temp, DND, Privilege -->
     <TextView
         android:id="@+id/notification_telemetry"
         android:layout_width="match_parent"

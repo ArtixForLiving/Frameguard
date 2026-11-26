@@ -2,10 +2,12 @@ package com.optimizer.game
 
 import com.optimizer.game.privilege.ShellResult
 import com.optimizer.game.service.BoostSessionService
+import com.optimizer.game.service.ClosedLoopStatus
 import com.optimizer.game.service.WatchdogCycleEvaluator
 import com.optimizer.game.service.WatchdogDecision
 import com.optimizer.game.service.evaluateSurfaceFlingerAudit
 import com.optimizer.game.service.parseProcessAndForegroundState
+import com.optimizer.game.service.resolveTerminalClosedLoopStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -160,5 +162,14 @@ class WatchdogForegroundTest {
                 expectedDownscale = "0.75"
             )
         )
+    }
+
+    @Test
+    fun testResolveTerminalClosedLoopStatusPreservesDegradedAcrossStopAndDestroy() {
+        assertEquals(ClosedLoopStatus.DEGRADED, resolveTerminalClosedLoopStatus(ClosedLoopStatus.DEGRADED))
+        assertEquals(ClosedLoopStatus.IDLE, resolveTerminalClosedLoopStatus(ClosedLoopStatus.SYNC_LOCKED))
+        assertEquals(ClosedLoopStatus.IDLE, resolveTerminalClosedLoopStatus(ClosedLoopStatus.OEM_BYPASS))
+        assertEquals(ClosedLoopStatus.IDLE, resolveTerminalClosedLoopStatus(ClosedLoopStatus.THERMAL_30))
+        assertEquals(ClosedLoopStatus.IDLE, resolveTerminalClosedLoopStatus(ClosedLoopStatus.IDLE))
     }
 }

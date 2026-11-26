@@ -36,7 +36,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Locale
-import kotlin.math.abs
 
 enum class ClosedLoopStatus {
     IDLE,
@@ -146,6 +145,9 @@ internal fun evaluateSurfaceFlingerAudit(
     val physicalOk = ranges.physicalMaxHz == null || ranges.physicalMaxHz <= expectedMaxHz + 0.5f
     return renderOk && physicalOk
 }
+
+internal fun resolveTerminalClosedLoopStatus(currentStatus: ClosedLoopStatus): ClosedLoopStatus =
+    if (currentStatus == ClosedLoopStatus.DEGRADED) ClosedLoopStatus.DEGRADED else ClosedLoopStatus.IDLE
 
 internal suspend fun applyThermalTransition(
     transition: ThermalLimiterState,
@@ -636,7 +638,7 @@ class BoostSessionService : Service() {
             watchdogJob = null
 
             if (!_isBoostActive.value) {
-                resetSessionStateFlows(ClosedLoopStatus.IDLE)
+                resetSessionStateFlows(resolveTerminalClosedLoopStatus(_closedLoopStatus.value))
                 if (stopService) {
                     ServiceCompat.stopForeground(this@BoostSessionService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -794,9 +796,12 @@ class BoostSessionService : Service() {
                     }
 
                     if (temp != null) {
-                        cachedTemp = temp
-                        _currentTemperatureC.value = temp
-                        updateNotification()
+                        sessionMutex.withLock {
+                            if (!_isBoostActive.value) return@withLock
+                            cachedTemp = temp
+                            _currentTemperatureC.value = temp
+                            updateNotification()
+                        }
                     }
 
                     // 2. Adaptive Thermal Guard (rate-limit compliant >= 10_000ms)
@@ -954,10 +959,13 @@ class BoostSessionService : Service() {
     }
 
     private suspend fun markDegradedIfNeeded(message: String) {
-        if (_closedLoopStatus.value != ClosedLoopStatus.DEGRADED) {
-            _closedLoopStatus.value = ClosedLoopStatus.DEGRADED
-            GameOptimizerEngine.log(message, GameOptimizerEngine.LogType.ERROR)
-            updateNotification()
+        sessionMutex.withLock {
+            if (!_isBoostActive.value) return@withLock
+            if (_closedLoopStatus.value != ClosedLoopStatus.DEGRADED) {
+                _closedLoopStatus.value = ClosedLoopStatus.DEGRADED
+                GameOptimizerEngine.log(message, GameOptimizerEngine.LogType.ERROR)
+                updateNotification()
+            }
         }
     }
 
@@ -965,6 +973,7 @@ class BoostSessionService : Service() {
         label.removeSuffix("Hz").removeSuffix("hz").trim().toFloatOrNull()
 
     private fun updateNotification() {
+        if (!_isBoostActive.value) return
         val manager = getSystemService(NotificationManager::class.java)
         manager?.notify(NOTIFICATION_ID, buildCustomNotification())
     }
@@ -1101,7 +1110,7 @@ class BoostSessionService : Service() {
                 }
             }
         } else {
-            resetSessionStateFlows(ClosedLoopStatus.IDLE)
+            resetSessionStateFlows(resolveTerminalClosedLoopStatus(_closedLoopStatus.value))
         }
         serviceScope.cancel()
         super.onDestroy()
