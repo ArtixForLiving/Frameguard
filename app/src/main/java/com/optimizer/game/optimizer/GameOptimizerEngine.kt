@@ -371,10 +371,9 @@ object GameOptimizerEngine {
 
         // Cache user auto-rotate state so it is never permanently flipped
         if (cachedAutoRotate == null) {
-            val currentRotation = PrivilegeManager.exec("settings get system accelerometer_rotation").trim()
-            if (currentRotation == "0" || currentRotation == "1") {
-                cachedAutoRotate = currentRotation
-            }
+            cachedAutoRotate = parseAutoRotateState(
+                PrivilegeManager.exec("settings get system accelerometer_rotation")
+            )
         }
 
         // 5. Set custom mode intervention config and activate Game Mode
@@ -504,13 +503,25 @@ object GameOptimizerEngine {
         hasCachedRates = false
 
         // 5. Restore user auto-rotate state if cached
-        cachedAutoRotate?.let { original ->
-            val restoreRotateCmd = "settings put system accelerometer_rotation $original"
+        buildRestoreAutoRotateCommand(cachedAutoRotate)?.let { restoreRotateCmd ->
             log(restoreRotateCmd, LogType.COMMAND)
             PrivilegeManager.exec(restoreRotateCmd)
-            cachedAutoRotate = null
         }
+        cachedAutoRotate = null
         return true
+    }
+
+    internal fun parseAutoRotateState(rawOutput: String): String? {
+        val trimmed = rawOutput.trim()
+        return if (trimmed == "0" || trimmed == "1") trimmed else null
+    }
+
+    internal fun buildRestoreAutoRotateCommand(cachedValue: String?): String? {
+        return if (cachedValue == "0" || cachedValue == "1") {
+            "settings put system accelerometer_rotation $cachedValue"
+        } else {
+            null
+        }
     }
 
     /**

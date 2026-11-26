@@ -91,6 +91,39 @@ class ThermalHysteresisEvaluator(val pollIntervalMs: Long = 3000) {
     }
 }
 
+enum class WatchdogDecision {
+    ALIVE,
+    GLITCH,
+    MISSING_PENDING,
+    EXIT_CONFIRMED
+}
+
+class WatchdogCycleEvaluator(private val requiredConsecutiveMisses: Int = 2) {
+    var consecutiveEmptyCount: Int = 0
+        private set
+
+    fun evaluate(pidOut: String): WatchdogDecision {
+        val trimmed = pidOut.trim()
+        if (trimmed.contains("ERROR")) {
+            return WatchdogDecision.GLITCH
+        }
+        if (trimmed.isEmpty()) {
+            consecutiveEmptyCount++
+            return if (consecutiveEmptyCount >= requiredConsecutiveMisses) {
+                WatchdogDecision.EXIT_CONFIRMED
+            } else {
+                WatchdogDecision.MISSING_PENDING
+            }
+        }
+        consecutiveEmptyCount = 0
+        return WatchdogDecision.ALIVE
+    }
+
+    fun reset() {
+        consecutiveEmptyCount = 0
+    }
+}
+
 class BoostSessionService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -233,7 +266,7 @@ class BoostSessionService : Service() {
         watchdogJob = serviceScope.launch {
             // Initial launch grace period (8000ms) for the game process to initialize
             delay(8000)
-            var consecutiveEmptyCount = 0
+            val watchdogEvaluator = WatchdogCycleEvaluator()
             while (isActive && _isBoostActive.value) {
                 delay(3000)
                 try {
@@ -250,18 +283,19 @@ class BoostSessionService : Service() {
                     }
 
                     val pidOut = PrivilegeManager.exec("pidof $packageName").trim()
-                    if (pidOut.contains("ERROR")) {
-                        GameOptimizerEngine.log("Watchdog: Binder/execution glitch ($pidOut). Retrying...", GameOptimizerEngine.LogType.INFO)
-                    } else if (pidOut.isEmpty()) {
-                        consecutiveEmptyCount++
-                        GameOptimizerEngine.log("Watchdog: Process not detected ($consecutiveEmptyCount/2 checks for $packageName)", GameOptimizerEngine.LogType.INFO)
-                        if (consecutiveEmptyCount >= 2) {
+                    when (watchdogEvaluator.evaluate(pidOut)) {
+                        WatchdogDecision.GLITCH -> {
+                            GameOptimizerEngine.log("Watchdog: Binder/execution glitch ($pidOut). Retrying...", GameOptimizerEngine.LogType.INFO)
+                        }
+                        WatchdogDecision.MISSING_PENDING -> {
+                            GameOptimizerEngine.log("Watchdog: Process not detected (${watchdogEvaluator.consecutiveEmptyCount}/2 checks for $packageName)", GameOptimizerEngine.LogType.INFO)
+                        }
+                        WatchdogDecision.EXIT_CONFIRMED -> {
                             GameOptimizerEngine.log("Process exit confirmed (PID terminated after 2 cycles) for $packageName", GameOptimizerEngine.LogType.INFO)
                             stop(this@BoostSessionService)
                             break
                         }
-                    } else {
-                        consecutiveEmptyCount = 0
+                        WatchdogDecision.ALIVE -> Unit
                     }
                 } catch (_: DeadObjectException) {
                     GameOptimizerEngine.log("UID 2000 binder dropped. Retrying...", GameOptimizerEngine.LogType.INFO)
