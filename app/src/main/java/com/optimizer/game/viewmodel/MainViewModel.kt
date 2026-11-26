@@ -682,7 +682,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             PrivilegeManager.refreshState()
             delay(350)
             if (!privilegeState.value.isConnected) {
-                val port = AdbPortScanner.findOpenPort(context)
+                val discovery = AdbMdnsDiscovery(context)
+                discovery.startDiscovery()
+                var port: Int? = null
+                repeat(8) {
+                    port = discovery.connectPort.value
+                    if (port != null) return@repeat
+                    delay(150)
+                }
+                discovery.stopDiscovery()
+
+                if (port == null) {
+                    port = AdbPortScanner.findOpenPort(context)
+                }
                 if (port != null) {
                     NativeDaemonManager.ensureDaemonStarted(context, port)
                     PrivilegeManager.refreshState()
@@ -698,12 +710,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onPairAdbWithCode(context: Context, portText: String, codeText: String) {
-        val port = portText.trim().toIntOrNull()
+        val explicitPort = portText.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
         val code = codeText.trim()
-        if (port == null || port !in 1024..65535 || code.length != 6) {
+        if ((portText.isNotBlank() && (explicitPort == null || explicitPort !in 1024..65535)) || code.length != 6) {
             viewModelScope.launch {
                 GameOptimizerEngine.log(
-                    "Invalid pairing input: enter a 6-digit code and port (1024-65535)",
+                    "Invalid pairing input: enter a 6-digit code (port optional if mDNS active)",
                     GameOptimizerEngine.LogType.ERROR
                 )
             }
@@ -714,6 +726,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val port = explicitPort ?: run {
+                    val pairingDiscovery = AdbMdnsDiscovery(context)
+                    pairingDiscovery.startDiscovery()
+                    var resolved: Int? = null
+                    repeat(15) {
+                        resolved = pairingDiscovery.pairingPort.value
+                        if (resolved != null) return@repeat
+                        delay(200)
+                    }
+                    pairingDiscovery.stopDiscovery()
+                    resolved
+                }
+                if (port == null) {
+                    GameOptimizerEngine.log(
+                        "Pairing port not discovered via mDNS. Enter the pairing port manually or use notification pairing.",
+                        GameOptimizerEngine.LogType.ERROR
+                    )
+                    return@launch
+                }
                 val paired = AdbPairingClient.pair(context, port, code)
                 if (paired) {
                     val discovery = AdbMdnsDiscovery(context)

@@ -41,7 +41,21 @@ import com.optimizer.game.ui.theme.SignalRed
 import com.optimizer.game.ui.theme.ZincMuted
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+private var activePairingDiscoveryJob: Job? = null
+private var activePairingDiscovery: AdbMdnsDiscovery? = null
+
+fun stopActivePairingDiscovery() {
+    activePairingDiscoveryJob?.cancel()
+    activePairingDiscoveryJob = null
+    activePairingDiscovery?.stopDiscovery()
+    activePairingDiscovery = null
+}
 
 @Composable
 fun PrivilegeSetupCard(
@@ -161,8 +175,30 @@ fun triggerWirelessAdbPairing(context: Context) {
         }
     }
 
-    // Launch discovery and pairing notification
-    AdbPairingReceiver.showPairingNotification(context, null)
+    // Launch live mDNS discovery and pairing notification
+    stopActivePairingDiscovery()
+    val appContext = context.applicationContext
+    AdbPairingReceiver.showPairingNotification(appContext, null)
+
+    val discovery = AdbMdnsDiscovery(appContext)
+    activePairingDiscovery = discovery
+    discovery.startDiscovery()
+    activePairingDiscoveryJob = CoroutineScope(Dispatchers.IO).launch {
+        try {
+            withTimeoutOrNull(120_000L) {
+                discovery.pairingPort.collectLatest { port ->
+                    if (port != null && port > 0) {
+                        AdbPairingReceiver.showPairingNotification(appContext, port)
+                    }
+                }
+            }
+        } finally {
+            discovery.stopDiscovery()
+            if (activePairingDiscovery === discovery) {
+                activePairingDiscovery = null
+            }
+        }
+    }
 
     // Open Developer Settings
     try {

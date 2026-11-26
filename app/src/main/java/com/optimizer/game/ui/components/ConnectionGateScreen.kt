@@ -228,9 +228,9 @@ fun ConnectionGateScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             PairingInputField(
-                                label = "PAIRING PORT",
+                                label = "PAIRING PORT (OPT)",
                                 value = pairPort,
-                                placeholder = "37125",
+                                placeholder = "AUTO mDNS",
                                 maxLength = 5,
                                 onValueChange = { pairPort = it.filter(Char::isDigit).take(5) },
                                 modifier = Modifier.weight(1f)
@@ -312,7 +312,7 @@ fun ConnectionGateScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (pairDrawerOpen) "[ CANCEL PAIR ]" else "[ PAIR NEW CODE ]",
+                            text = if (pairDrawerOpen) "[ CANCEL PAIR ]" else "[ ENTER CODE / MANUAL ]",
                             fontFamily = FontFamily.Monospace,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,

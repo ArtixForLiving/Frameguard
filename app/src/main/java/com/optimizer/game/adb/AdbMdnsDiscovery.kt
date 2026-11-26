@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.net.InetAddress
+import java.net.NetworkInterface
 
 class AdbMdnsDiscovery(private val context: Context) {
 
@@ -32,6 +33,36 @@ class AdbMdnsDiscovery(private val context: Context) {
 
         internal fun isLoopbackHost(addresses: List<InetAddress>): Boolean =
             addresses.any { it.isLoopbackAddress }
+
+        internal fun isLocalDeviceHost(
+            addresses: List<InetAddress>,
+            localAddresses: Set<InetAddress> = collectLocalAddresses()
+        ): Boolean {
+            if (isLoopbackHost(addresses)) return true
+            if (addresses.isEmpty() || localAddresses.isEmpty()) return false
+            val localHostStrings = localAddresses.mapNotNull { it.hostAddress?.substringBefore('%') }.toSet()
+            return addresses.any { addr ->
+                addr in localAddresses ||
+                    addr.hostAddress?.substringBefore('%') in localHostStrings
+            }
+        }
+
+        internal fun collectLocalAddresses(): Set<InetAddress> {
+            return try {
+                val result = mutableSetOf<InetAddress>()
+                val interfaces = NetworkInterface.getNetworkInterfaces() ?: return emptySet()
+                while (interfaces.hasMoreElements()) {
+                    val iface = interfaces.nextElement()
+                    val addrs = iface.inetAddresses
+                    while (addrs.hasMoreElements()) {
+                        result.add(addrs.nextElement())
+                    }
+                }
+                result
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
     }
 
     fun startDiscovery() {
@@ -133,11 +164,11 @@ class AdbMdnsDiscovery(private val context: Context) {
                                 } else {
                                     listOfNotNull(resolvedInfo.host)
                                 }
-                                if (isLoopbackHost(addresses)) {
-                                    android.util.Log.i("AdbMdns", "mDNS resolved loopback: ${resolvedInfo.serviceName} on port ${resolvedInfo.port}")
+                                if (isLocalDeviceHost(addresses)) {
+                                    android.util.Log.i("AdbMdns", "mDNS resolved local host: ${resolvedInfo.serviceName} on port ${resolvedInfo.port}")
                                     onResolved(resolvedInfo)
                                 } else {
-                                    android.util.Log.w("AdbMdns", "Rejected non-loopback mDNS service: ${resolvedInfo.serviceName}")
+                                    android.util.Log.w("AdbMdns", "Rejected non-local mDNS service: ${resolvedInfo.serviceName}")
                                 }
                             }
                         } finally {

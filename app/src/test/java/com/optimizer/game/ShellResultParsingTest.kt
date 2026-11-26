@@ -130,4 +130,16 @@ class ShellResultParsingTest {
         assertFalse(AdbMdnsDiscovery.isLoopbackHost(listOf(InetAddress.getByName("192.168.1.10"))))
         assertFalse(AdbMdnsDiscovery.isLoopbackHost(emptyList()))
     }
+
+    @Test
+    fun `isLocalDeviceHost accepts device local IP and rejects external LAN IP`() {
+        val localIp = InetAddress.getByName("192.168.1.42")
+        val externalIp = InetAddress.getByName("192.168.1.99")
+        val localSet = setOf(localIp)
+
+        assertTrue(AdbMdnsDiscovery.isLocalDeviceHost(listOf(localIp), localSet))
+        assertTrue(AdbMdnsDiscovery.isLocalDeviceHost(listOf(InetAddress.getByName("127.0.0.1")), emptySet()))
+        assertFalse(AdbMdnsDiscovery.isLocalDeviceHost(listOf(externalIp), localSet))
+        assertFalse(AdbMdnsDiscovery.isLocalDeviceHost(emptyList(), localSet))
+    }
 }

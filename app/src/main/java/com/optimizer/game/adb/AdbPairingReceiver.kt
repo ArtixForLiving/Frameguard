@@ -12,6 +12,7 @@ import androidx.core.app.RemoteInput
 import com.optimizer.game.R
 import com.optimizer.game.optimizer.GameOptimizerEngine
 import com.optimizer.game.privilege.PrivilegeManager
+import com.optimizer.game.ui.components.stopActivePairingDiscovery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -88,6 +89,7 @@ class AdbPairingReceiver : BroadcastReceiver() {
         if (code.isNullOrEmpty()) return
 
         val pendingResult = goAsync()
+        stopActivePairingDiscovery()
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 // Support both plain "678036" and explicit "<port> <code>" (e.g. "45065 678036")
