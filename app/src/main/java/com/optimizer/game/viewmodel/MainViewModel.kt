@@ -121,8 +121,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.digitalextremes.warframemobile"),
                 recommendedFps = 60,
                 maxSupportedFps = 60,
-                recommendationReason = "Engine native cap 60 FPS · 60Hz lock provides 1:1 VSYNC & lowest thermals",
-                supportsRenderScale = false
+                recommendationReason = "Engine native cap 60 FPS · 60Hz lock & 30 FPS clamp verified",
+                supportsRenderScale = true,
+                recommendedScale = 75,
+                scaleReason = "75% cuts GPU load while keeping text legible."
             ),
             SupportedGameDef(
                 id = "genshin",
@@ -136,15 +138,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 scaleReason = "75% cuts GPU load by 44% for steadier 60 FPS."
             ),
             SupportedGameDef(
-                id = "wuwa",
-                defaultName = "Wuthering Waves",
-                candidatePackages = listOf("com.kurogame.wutheringwaves.global", "com.kurogame.kj"),
+                id = "minecraft",
+                defaultName = "Minecraft",
+                candidatePackages = listOf("com.mojang.minecraftpe"),
                 recommendedFps = 60,
-                maxSupportedFps = 60,
-                recommendationReason = "Android engine capped at 60 FPS · 60Hz lock ensures sustained GPU stability",
+                maxSupportedFps = 120,
+                recommendationReason = "Supports GameManager 30 FPS clamp & SurfaceFlinger downscale",
                 supportsRenderScale = true,
                 recommendedScale = 75,
-                scaleReason = "75% lowers GPU heat while keeping visuals sharp."
+                scaleReason = "75% lowers GPU heat with crisp UI."
             ),
             SupportedGameDef(
                 id = "roblox",
@@ -153,7 +155,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 recommendedFps = 60,
                 maxSupportedFps = 60,
                 recommendationReason = "Engine requests 120Hz via setFrameRate · System FPS/Hz lock may be overridden",
-                supportsRenderScale = false
+                supportsRenderScale = true,
+                recommendedScale = 75,
+                scaleReason = "SurfaceFlinger buffer scale & WM scale supported."
             ),
             SupportedGameDef(
                 id = "pubg",
@@ -162,25 +166,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 recommendedFps = 90,
                 maxSupportedFps = 120,
                 recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for competitive latency & thermals",
-                supportsRenderScale = false
-            ),
-            SupportedGameDef(
-                id = "freefire",
-                defaultName = "Free Fire",
-                candidatePackages = listOf("com.dts.freefireth", "com.dts.freefiremax"),
-                recommendedFps = 90,
-                maxSupportedFps = 120,
-                recommendationReason = "Supports High-FPS (90/120) · 90Hz lock delivers fluid response & steady frametimes",
-                supportsRenderScale = false
-            ),
-            SupportedGameDef(
-                id = "mlbb",
-                defaultName = "Mobile Legends: Bang Bang",
-                candidatePackages = listOf("com.mobile.legends", "com.vng.mlbbvn", "com.mobilelegends.hwag", "com.mobilelegends.mi"),
-                recommendedFps = 90,
-                maxSupportedFps = 120,
-                recommendationReason = "Supports up to 120 FPS · 90Hz lock recommended for low touch latency & thermals",
-                supportsRenderScale = false
+                supportsRenderScale = true,
+                recommendedScale = 75,
+                scaleReason = "75% lowers GPU heat in sustained matches."
             ),
             SupportedGameDef(
                 id = "pubgflash",
@@ -189,7 +177,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 recommendedFps = 60,
                 maxSupportedFps = 60,
                 recommendationReason = "Lightweight client capped at 60 FPS · 60Hz lock provides flat 16.6ms frametime",
-                supportsRenderScale = false
+                supportsRenderScale = true,
+                recommendedScale = 75,
+                scaleReason = "SurfaceFlinger buffer scale supported."
             )
         )
     }

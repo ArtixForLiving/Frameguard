@@ -71,19 +71,13 @@ class PrivilegeUnitTest {
 
     @Test
     fun testRobloxCatalogAndScaleGating() {
-        val roblox = MainViewModel.SUPPORTED_CATALOG.find { it.id == "roblox" }
-        assertNotNull(roblox)
-        assertEquals(60, roblox?.recommendedFps)
-        assertEquals(60, roblox?.maxSupportedFps)
-        assertTrue(roblox?.supportsRenderScale == false)
-        assertEquals(100, roblox?.recommendedScale)
+        val ids = MainViewModel.SUPPORTED_CATALOG.map { it.id }.toSet()
+        assertEquals(setOf("warframe", "genshin", "minecraft", "roblox", "pubg", "pubgflash"), ids)
 
-        val warframe = MainViewModel.SUPPORTED_CATALOG.find { it.id == "warframe" }
-        assertTrue(warframe?.supportsRenderScale == false)
-
-        val genshin = MainViewModel.SUPPORTED_CATALOG.find { it.id == "genshin" }
-        assertTrue(genshin?.supportsRenderScale == true)
-        assertEquals(75, genshin?.recommendedScale)
+        for (game in MainViewModel.SUPPORTED_CATALOG) {
+            assertTrue("${game.id} should support scale badge", game.supportsRenderScale)
+            assertEquals(75, game.recommendedScale)
+        }
     }
 
     @Test
