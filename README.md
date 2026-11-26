@@ -139,11 +139,13 @@ FrameGuard is engineered following modern Android architecture standards:
   - `dumpsys deviceidle` for deep doze background state enforcement.
   - `cmd package compile -m speed -f` for ART dex2oat Ahead-Of-Time compilation.
   - Android HAL `PowerManager` for real-time hardware thermal throttling telemetry.
-- **Platform Compatibility:** Targets Android 12 through Android 16 (API Level 31 to 36).
+- **Platform Compatibility:** Targets Android 12 through Android 17 (API Level 31 to 37).
 
 ---
 
 ## 📜 License
 
-This project is licensed under the **FrameGuard Non-Commercial License**.  
-Personal, educational, and research use is permitted. **Commercial use, distribution, or monetization is strictly prohibited.** See the [LICENSE](LICENSE) file for full details.
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+
+You are free to use, modify, and distribute this software under the terms of the GPL-3.0 license. See the [LICENSE](LICENSE) file for full details.
+
