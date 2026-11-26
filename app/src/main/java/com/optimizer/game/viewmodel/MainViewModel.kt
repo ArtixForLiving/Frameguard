@@ -153,9 +153,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 recommendedFps = 60,
                 maxSupportedFps = 60,
                 recommendationReason = "Official mobile client capped at 60 FPS · 60Hz lock eliminates frame judder & saves battery",
-                supportsRenderScale = true,
-                recommendedScale = 75,
-                scaleReason = "Cuts GPU load while keeping draw distance high."
+                supportsRenderScale = false
             ),
             SupportedGameDef(
                 id = "pubg",
@@ -904,7 +902,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val savedScale = if (_deviceProfile.value.supportsWmWrite) {
             prefs.getInt("${app.packageName}_scale", 100)
         } else 100
-        val savedDownscale = if (_deviceProfile.value.supportsGameManager) {
+        val savedDownscale = if (_deviceProfile.value.supportsGameManager && app.supportsRenderScale) {
             GameOptimizerEngine.normalizeDownscaleRatio(
                 prefs.getString("${app.packageName}_downscale", "1.0") ?: "1.0"
             )

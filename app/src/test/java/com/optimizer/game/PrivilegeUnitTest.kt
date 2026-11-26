@@ -75,8 +75,8 @@ class PrivilegeUnitTest {
         assertNotNull(roblox)
         assertEquals(60, roblox?.recommendedFps)
         assertEquals(60, roblox?.maxSupportedFps)
-        assertTrue(roblox?.supportsRenderScale == true)
-        assertEquals(75, roblox?.recommendedScale)
+        assertTrue(roblox?.supportsRenderScale == false)
+        assertEquals(100, roblox?.recommendedScale)
 
         val warframe = MainViewModel.SUPPORTED_CATALOG.find { it.id == "warframe" }
         assertTrue(warframe?.supportsRenderScale == false)

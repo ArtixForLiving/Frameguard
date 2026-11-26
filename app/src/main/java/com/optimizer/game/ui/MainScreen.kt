@@ -734,9 +734,10 @@ fun MainScreen(viewModel: MainViewModel) {
 
                         HorizontalHairline()
 
-                        // 5. System Directives (Filtered by DeviceCapabilityProfile)
+                        // 5. System Directives (Filtered by DeviceCapabilityProfile & per-app support)
+                        val showGameDownscale = deviceProfile.supportsGameManager && selectedApp.supportsRenderScale
                         val visibleDirectiveCount = 1 +
-                            (if (deviceProfile.supportsGameManager) 1 else 0) +
+                            (if (showGameDownscale) 1 else 0) +
                             (if (deviceProfile.supportsDnd) 1 else 0)
 
                         Column(
@@ -768,8 +769,8 @@ fun MainScreen(viewModel: MainViewModel) {
                                 )
                             }
 
-                            // Directive 1: Per-App Game Downscale (Hidden if !supportsGameManager)
-                            if (deviceProfile.supportsGameManager) {
+                            // Directive 1: Per-App Game Downscale (Hidden if !supportsGameManager or !selectedApp.supportsRenderScale)
+                            if (showGameDownscale) {
                                 HorizontalHairline()
                                 val downscaleInteractive = isConnected && !isBoostActive
                                 Column(
