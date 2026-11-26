@@ -25,6 +25,12 @@ class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
 
     val mdnsDiscovery = AdbMdnsDiscovery(context)
     private var watcherJob: Job? = null
+    @Volatile
+    private var lastBootstrapFailureMs: Long = 0L
+
+    companion object {
+        private const val BOOTSTRAP_FAILURE_COOLDOWN_MS = 5_000L
+    }
 
     init {
         startBackgroundDiscovery()
@@ -38,10 +44,12 @@ class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
             mdnsDiscovery.connectPort.collect { port ->
                 if (port != null) {
                     AdbPortStore.savePort(context, port)
-                    if (!_state.value.isConnected) {
+                    if (!_state.value.isConnected && !isInBootstrapCooldown()) {
                         val started = NativeDaemonManager.ensureDaemonStarted(context, port)
                         if (started) {
                             _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                        } else {
+                            lastBootstrapFailureMs = System.currentTimeMillis()
                         }
                     }
                 }
@@ -91,17 +99,22 @@ class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
                 _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
             } else {
                 val connectPort = mdnsDiscovery.connectPort.value ?: AdbPortStore.getPort(context)
-                if (connectPort != null) {
+                if (connectPort != null && !isInBootstrapCooldown()) {
                     val started = NativeDaemonManager.ensureDaemonStarted(context, connectPort)
                     if (started) {
                         _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
                         return@launch
+                    } else {
+                        lastBootstrapFailureMs = System.currentTimeMillis()
                     }
                 }
                 _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
             }
         }
     }
+
+    private fun isInBootstrapCooldown(): Boolean =
+        System.currentTimeMillis() - lastBootstrapFailureMs < BOOTSTRAP_FAILURE_COOLDOWN_MS
 
     override suspend fun exec(command: String): ShellResult =
         executeWithFallback(

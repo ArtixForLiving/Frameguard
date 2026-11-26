@@ -131,14 +131,16 @@ object AdbTlsClient {
     }
 
     /**
-     * Launches a detached background command over ADB shell and optionally feeds stdinPayload
-     * directly over the AdbStream without placing secrets in the command line.
+     * Launches a detached background command over a raw non-PTY ADB exec pipe,
+     * feeds stdinPayload directly without exposing secrets in cmdline, and reads
+     * any immediate stdout (e.g. discovered ephemeral port) up to readTimeoutMs.
      */
     suspend fun execDetached(
         context: Context,
         port: Int,
         command: String,
-        stdinPayload: String? = null
+        stdinPayload: String? = null,
+        readTimeoutMs: Long = 2_800L
     ): ShellResult = withContext(Dispatchers.IO) {
         var connection: AdbConnection? = null
         var stream: AdbStream? = null
@@ -157,14 +159,31 @@ object AdbTlsClient {
             }
             AdbPortStore.savePort(context, port)
 
-            stream = connection.open("shell:$command")
+            stream = connection.open("exec:$command")
             if (stdinPayload != null) {
                 val bytes = stdinPayload.toByteArray(Charsets.UTF_8)
                 stream.write(bytes, 0, bytes.size)
                 stream.flush()
             }
-            delay(900)
-            ShellResult(exitCode = 0, stdout = "", stderr = "")
+
+            val rawBuilder = StringBuilder()
+            withTimeoutOrNull(readTimeoutMs) {
+                runInterruptible(Dispatchers.IO) {
+                    val buffer = ByteArray(1024)
+                    while (true) {
+                        val bytesRead = try {
+                            stream.read(buffer, 0, buffer.size)
+                        } catch (e: IOException) {
+                            if (stream.isClosed || e.cause is InterruptedException) -1 else throw e
+                        }
+                        if (bytesRead < 0) break
+                        if (bytesRead > 0) {
+                            rawBuilder.append(String(buffer, 0, bytesRead, Charsets.UTF_8))
+                        }
+                    }
+                }
+            }
+            ShellResult(exitCode = 0, stdout = rawBuilder.toString().trim(), stderr = "")
         } catch (e: Exception) {
             GameOptimizerEngine.log(
                 "[ERR] AdbConnection execDetached failed: ${e.message}",

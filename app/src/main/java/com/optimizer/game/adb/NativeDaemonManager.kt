@@ -83,11 +83,15 @@ object NativeDaemonManager {
             launchDaemon = {
                 val token = getOrCreateAuthToken(context)
                 val apkPath = context.packageCodePath
-                // Feed token via stdin so /proc/<pid>/cmdline never exposes it; setsid detaches from adbd PTY.
-                val bootstrapCmd = "rm -f ${DaemonServer.PORT_FILE_PATH}; " +
+                // Feed token via raw exec pipe stdin so /proc/<pid>/cmdline never exposes it;
+                // wait briefly inside sh for the ephemeral port file and echo it back on the same connection.
+                val bootstrapCmd = "rm -f ${DaemonServer.PORT_FILE_PATH} /data/local/tmp/.fg_daemon_boot.err; " +
                     "IFS= read -r FG_TOK; " +
                     "(printf '%s\\n' \"\$FG_TOK\" | setsid app_process -Djava.class.path='$apkPath' " +
-                    "/system/bin com.optimizer.game.adb.DaemonServer >/dev/null 2>&1 &)"
+                    "/system/bin com.optimizer.game.adb.DaemonServer >/dev/null 2>/data/local/tmp/.fg_daemon_boot.err &); " +
+                    "i=0; while [ \$i -lt 20 ]; do " +
+                    "if [ -s ${DaemonServer.PORT_FILE_PATH} ]; then cat ${DaemonServer.PORT_FILE_PATH}; break; fi; " +
+                    "i=\$((i+1)); sleep 0.1; done"
 
                 AdbTlsClient.execDetached(
                     context = context,
@@ -121,7 +125,15 @@ object NativeDaemonManager {
                 return@withContext false
             }
 
-            for (i in 0 until 4) {
+            val inlinePort = launchResult.stdout.trim().toIntOrNull()?.takeIf { it in 1024..65535 }
+            if (inlinePort != null) {
+                currentPort = inlinePort
+                if (checkAlive()) {
+                    return@withContext true
+                }
+            }
+
+            for (i in 0 until 2) {
                 delay(pollDelayMs)
                 val discoveredPort = readPort()
                 if (discoveredPort != null) {

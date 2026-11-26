@@ -693,7 +693,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 discovery.stopDiscovery()
 
                 if (port == null) {
-                    port = AdbPortScanner.findOpenPort(context)
+                    val cached = com.optimizer.game.adb.AdbPortStore.getPort(context)
+                    if (cached != null && AdbPortScanner.isPortListening(cached, 50)) {
+                        port = cached
+                    }
                 }
                 if (port != null) {
                     NativeDaemonManager.ensureDaemonStarted(context, port)
