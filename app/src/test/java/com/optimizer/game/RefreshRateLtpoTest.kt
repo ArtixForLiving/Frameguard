@@ -66,6 +66,32 @@ class RefreshRateLtpoTest {
     }
 
     @Test
+    fun testSubRefreshTargetFpsDeletesMinRefreshRateFloor() {
+        assertEquals(
+            listOf(
+                listOf("settings", "delete", "system", "min_refresh_rate"),
+                listOf("settings", "put", "system", "peak_refresh_rate", "60.0")
+            ),
+            GameOptimizerEngine.buildRefreshRateLockSequence(
+                targetHz = 60f,
+                currentMinHz = 60f,
+                targetFps = 30
+            )
+        )
+        assertEquals(
+            listOf(
+                listOf("settings", "delete", "system", "min_refresh_rate"),
+                listOf("settings", "put", "system", "peak_refresh_rate", "90.0")
+            ),
+            GameOptimizerEngine.buildRefreshRateLockSequence(
+                targetHz = 90f,
+                currentMinHz = 90f,
+                targetFps = 45
+            )
+        )
+    }
+
+    @Test
     fun testResolveOptimalRefreshRateAgainstSupportedModes() {
         val fullLtpoPanel = listOf(60.0f, 90.0f, 120.00001f)
         assertEquals(60f, GameOptimizerEngine.resolveOptimalRefreshRate(30, fullLtpoPanel), 0.01f)

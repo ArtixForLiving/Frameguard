@@ -439,11 +439,23 @@ object GameOptimizerEngine {
         }
     }
 
-    internal fun buildRefreshRateLockSequence(targetHz: Float, currentMinHz: Float?): List<List<String>> {
+    internal fun buildRefreshRateLockSequence(
+        targetHz: Float,
+        currentMinHz: Float?,
+        targetFps: Int = targetHz.roundToInt()
+    ): List<List<String>> {
         val hzValue = String.format(Locale.US, "%.1f", targetHz)
-        val putMin = listOf("settings", "put", "system", "min_refresh_rate", hzValue)
         val putPeak = listOf("settings", "put", "system", "peak_refresh_rate", hzValue)
 
+        // When targetFps < targetHz (e.g., 30 FPS on 60Hz, 45 FPS on 90Hz, 40 FPS on 120Hz),
+        // locking min_refresh_rate to targetHz raises PRIORITY_USER_SETTING_MIN_RENDER_FRAME_RATE
+        // in DisplayModeDirector and blocks SurfaceFlinger's GameFrameRateOverride.
+        if (targetFps < targetHz.roundToInt()) {
+            val deleteMin = listOf("settings", "delete", "system", "min_refresh_rate")
+            return listOf(deleteMin, putPeak)
+        }
+
+        val putMin = listOf("settings", "put", "system", "min_refresh_rate", hzValue)
         val steppingDown = if (currentMinHz != null) {
             targetHz < currentMinHz
         } else {
@@ -564,7 +576,7 @@ object GameOptimizerEngine {
         return verified
     }
 
-    private suspend fun applyRefreshRateLock(optimalHz: Float) {
+    private suspend fun applyRefreshRateLock(optimalHz: Float, targetFps: Int) {
         var currentMinHz: Float? = null
         if (!hasCachedRates) {
             val peakRes = commandExecutor(listOf("settings", "get", "system", "peak_refresh_rate"))
@@ -586,7 +598,7 @@ object GameOptimizerEngine {
         }
 
         cachedCurrentPeakHz = optimalHz
-        for (args in buildRefreshRateLockSequence(optimalHz, currentMinHz)) {
+        for (args in buildRefreshRateLockSequence(optimalHz, currentMinHz, targetFps)) {
             log(args.joinToString(" "), LogType.COMMAND)
             val hzRes = commandExecutor(args)
             if (!hzRes.isOk && hzRes.stderr.isNotBlank()) {
@@ -620,7 +632,7 @@ object GameOptimizerEngine {
         _pairedRefreshRate.value = pairedLabel
 
         val gameVerified = applyGameModeAndVerify(packageName, targetFps, normalizedDownscale)
-        applyRefreshRateLock(optimalHz)
+        applyRefreshRateLock(optimalHz, targetFps)
         log("Live config updated: $targetFps FPS / downscale=$normalizedDownscale / $pairedLabel", LogType.STDOUT)
         return gameVerified
     }
@@ -732,7 +744,7 @@ object GameOptimizerEngine {
         val gameVerified = applyGameModeAndVerify(packageName, targetFps, normalizedDownscale)
 
         // 5. Cache raw refresh rates and apply LTPO-safe refresh rate lock
-        applyRefreshRateLock(optimalHz)
+        applyRefreshRateLock(optimalHz, targetFps)
 
         // 6. Safe background RAM trim before launch
         if (ramTrim) {
