@@ -72,11 +72,11 @@ object NativeDaemonManager {
             launchDaemon = {
                 val token = getOrCreateAuthToken(context)
                 val apkPath = context.packageCodePath
-                // Feed token via stdin so /proc/<pid>/cmdline never exposes it; read/printf are shell builtins.
+                // Feed token via stdin so /proc/<pid>/cmdline never exposes it; setsid detaches from adbd PTY.
                 val bootstrapCmd = "rm -f ${DaemonServer.PORT_FILE_PATH}; " +
                     "IFS= read -r FG_TOK; " +
-                    "printf '%s\\n' \"\$FG_TOK\" | nohup app_process -Djava.class.path='$apkPath' " +
-                    "/system/bin com.optimizer.game.adb.DaemonServer >/dev/null 2>&1 &"
+                    "(printf '%s\\n' \"\$FG_TOK\" | setsid app_process -Djava.class.path='$apkPath' " +
+                    "/system/bin com.optimizer.game.adb.DaemonServer >/dev/null 2>&1 &)"
 
                 AdbTlsClient.execDetached(
                     context = context,
@@ -91,7 +91,7 @@ object NativeDaemonManager {
         checkAlive: suspend () -> Boolean,
         readPort: suspend () -> Int?,
         launchDaemon: suspend () -> ShellResult,
-        pollDelayMs: Long = 400L
+        pollDelayMs: Long = 600L
     ): Boolean = withContext(Dispatchers.IO) {
         if (checkAlive()) return@withContext true
 
@@ -110,7 +110,7 @@ object NativeDaemonManager {
                 return@withContext false
             }
 
-            for (i in 0 until 8) {
+            for (i in 0 until 4) {
                 delay(pollDelayMs)
                 val discoveredPort = readPort()
                 if (discoveredPort != null) {

@@ -163,7 +163,7 @@ object AdbTlsClient {
                 stream.write(bytes, 0, bytes.size)
                 stream.flush()
             }
-            delay(350)
+            delay(900)
             ShellResult(exitCode = 0, stdout = "", stderr = "")
         } catch (e: Exception) {
             GameOptimizerEngine.log(

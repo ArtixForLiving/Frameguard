@@ -32,7 +32,6 @@ class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
 
     private fun startBackgroundDiscovery() {
         mdnsDiscovery.startDiscovery()
-        checkConnection()
 
         // 1. Observe mDNS discovered connect port
         scope.launch {
@@ -40,24 +39,29 @@ class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
                 if (port != null) {
                     AdbPortStore.savePort(context, port)
                     if (!_state.value.isConnected) {
-                        NativeDaemonManager.ensureDaemonStarted(context, port)
-                        checkConnection()
+                        val started = NativeDaemonManager.ensureDaemonStarted(context, port)
+                        if (started) {
+                            _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                        }
                     }
                 }
             }
         }
 
-        // 2. Parallel background discovery via cached port and verified port scan
+        // 2. Fallback discovery via cached port / port scan only if mDNS hasn't connected within 1.2s
         scope.launch {
-            if (!_state.value.isConnected) {
-                if (NativeDaemonManager.isDaemonAlive(context)) {
-                    _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
-                    return@launch
-                }
+            if (NativeDaemonManager.isDaemonAlive(context)) {
+                _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                return@launch
+            }
+            delay(1200)
+            if (!_state.value.isConnected && mdnsDiscovery.connectPort.value == null) {
                 val port = AdbPortScanner.findOpenPort(context)
                 if (port != null && !_state.value.isConnected) {
-                    NativeDaemonManager.ensureDaemonStarted(context, port)
-                    checkConnection()
+                    val started = NativeDaemonManager.ensureDaemonStarted(context, port)
+                    if (started) {
+                        _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                    }
                 }
             }
         }
