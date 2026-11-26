@@ -417,13 +417,16 @@ fun MainScreen(viewModel: MainViewModel) {
                         val effectiveScale = if (deviceProfile.supportsWmWrite) renderScale else 100
                         val activeHzLabel = effectiveRefreshRateHz?.let { "${it.roundToInt()}Hz" } ?: pairedRefreshRate
                         val displayValue = when {
+                            isBoostActive && isClamped30Fps && effectiveScale < 100 -> "30·${effectiveScale}%"
+                            isBoostActive && isClamped30Fps -> "30 FPS"
                             isBoostActive && effectiveScale < 100 -> "$activeHzLabel•${effectiveScale}%"
                             isBoostActive -> activeHzLabel
                             else -> currentDisplayHz
                         }
                         val displaySub = when {
                             isBoostActive && effectiveScale < 100 -> "${scaledMetrics.width}×${scaledMetrics.height}"
-                            isBoostActive && closedLoopStatus == ClosedLoopStatus.OEM_BYPASS -> "OEM OVERRIDE"
+                            isBoostActive && closedLoopStatus == ClosedLoopStatus.OEM_BYPASS -> "RATE OVERRIDE"
+                            isBoostActive && isClamped30Fps -> "≤$activeHzLabel CAP"
                             isBoostActive -> "VSYNC LOCKED"
                             effectiveScale < 100 -> "ARMED ${effectiveScale}%"
                             deviceProfile.detectedOemDaemons.isNotEmpty() -> {
@@ -435,16 +438,18 @@ fun MainScreen(viewModel: MainViewModel) {
                         val (profileText, profileSub, profileColor) = when {
                             isDegraded -> Triple("DEGRADED", "LINK LOST", SignalRed)
                             !isBoostActive -> Triple("IDLE", "STANDBY", BoneWhite)
-                            closedLoopStatus == ClosedLoopStatus.THERMAL_30 || isClamped30Fps ->
-                                Triple("THERMAL 30", "HAL SEVERE", SignalAmber)
                             closedLoopStatus == ClosedLoopStatus.OEM_BYPASS -> Triple(
                                 "OEM BYPASS",
                                 deviceProfile.detectedOemDaemons.firstOrNull()
                                     ?.substringAfterLast('.')
                                     ?.uppercase()
-                                    ?: "OVERRIDDEN",
+                                    ?: "RATE OVERRIDDEN",
                                 SignalAmber
                             )
+                            closedLoopStatus == ClosedLoopStatus.THERMAL_30 ->
+                                Triple("THERMAL 30", "HAL SEVERE", SignalAmber)
+                            isClamped30Fps ->
+                                Triple("CLAMPED 30", "MANUAL CAP", SignalAmber)
                             else -> Triple("SYNC LOCKED", "VERIFIED", NominalGreen)
                         }
 
@@ -734,8 +739,8 @@ fun MainScreen(viewModel: MainViewModel) {
 
                         HorizontalHairline()
 
-                        // 5. System Directives (Filtered by DeviceCapabilityProfile & per-app support)
-                        val showGameDownscale = deviceProfile.supportsGameManager && selectedApp.supportsRenderScale
+                        // 5. System Directives (Filtered by DeviceCapabilityProfile)
+                        val showGameDownscale = deviceProfile.supportsGameManager
                         val visibleDirectiveCount = 1 +
                             (if (showGameDownscale) 1 else 0) +
                             (if (deviceProfile.supportsDnd) 1 else 0)
@@ -769,7 +774,7 @@ fun MainScreen(viewModel: MainViewModel) {
                                 )
                             }
 
-                            // Directive 1: Per-App Game Downscale (Hidden if !supportsGameManager or !selectedApp.supportsRenderScale)
+                            // Directive 1: Per-App Game Downscale (Hidden if !supportsGameManager)
                             if (showGameDownscale) {
                                 HorizontalHairline()
                                 val downscaleInteractive = isConnected && !isBoostActive
@@ -870,7 +875,7 @@ fun MainScreen(viewModel: MainViewModel) {
                                         text = if (isBoostActive) {
                                             "APPLIES ON LAUNCH · Disengage active session to modify game buffer scale"
                                         } else {
-                                            "Scales game buffer only · System UI stays native"
+                                            "Scales app surface buffer · Visual impact varies by engine (0.75x/0.6x recommended)"
                                         },
                                         fontFamily = FontFamily.SansSerif,
                                         fontSize = 11.sp,

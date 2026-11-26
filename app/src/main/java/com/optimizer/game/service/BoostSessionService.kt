@@ -129,13 +129,21 @@ internal fun parseSurfaceFlingerPrimaryRanges(sfOutput: String): SurfaceFlingerR
     return SurfaceFlingerRanges(physicalMaxHz = physicalMax, renderMaxHz = renderMax)
 }
 
+internal fun parseUidSetFrameRateOverride(sfOutput: String, uid: Int): Float? {
+    val section = sfOutput.substringAfter("FrameRateOverrides=", "").take(400)
+    if (section.isEmpty()) return null
+    val match = Regex("""\{\s*$uid\s*,\s*([0-9.]+)\s*Hz\s*\}""").find(section) ?: return null
+    return match.groupValues[1].toFloatOrNull()
+}
+
 internal fun evaluateSurfaceFlingerAudit(
     sfOutput: String,
     gameOutput: String,
     packageName: String,
     expectedFps: Int,
     expectedMaxHz: Float,
-    expectedDownscale: String
+    expectedDownscale: String,
+    appUid: Int? = null
 ): Boolean {
     if (!GameOptimizerEngine.verifyGameManagerMode2(gameOutput, packageName, expectedFps, expectedDownscale)) {
         return false
@@ -143,7 +151,9 @@ internal fun evaluateSurfaceFlingerAudit(
     val ranges = parseSurfaceFlingerPrimaryRanges(sfOutput) ?: return false
     val renderOk = ranges.renderMaxHz == null || ranges.renderMaxHz <= expectedMaxHz + 0.5f
     val physicalOk = ranges.physicalMaxHz == null || ranges.physicalMaxHz <= expectedMaxHz + 0.5f
-    return renderOk && physicalOk
+    val uidRate = appUid?.let { parseUidSetFrameRateOverride(sfOutput, it) }
+    val uidRateOk = uidRate == null || uidRate <= expectedFps + 0.5f
+    return renderOk && physicalOk && uidRateOk
 }
 
 internal fun resolveTerminalClosedLoopStatus(currentStatus: ClosedLoopStatus): ClosedLoopStatus =
@@ -902,6 +912,9 @@ class BoostSessionService : Service() {
                         val ranges = parseSurfaceFlingerPrimaryRanges(sfRes.stdout)
                         _effectiveRefreshRateHz.value = ranges?.renderMaxHz ?: ranges?.physicalMaxHz ?: expectedMaxHz
 
+                        val appUid = runCatching {
+                            packageManager.getApplicationInfo(activePkg, 0).uid
+                        }.getOrNull()
                         val compliant = if (Build.VERSION.SDK_INT == 0 || Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             evaluateSurfaceFlingerAudit(
                                 sfOutput = sfRes.stdout,
@@ -909,7 +922,8 @@ class BoostSessionService : Service() {
                                 packageName = activePkg,
                                 expectedFps = expectedFps,
                                 expectedMaxHz = expectedMaxHz,
-                                expectedDownscale = currentDownscaleRatio
+                                expectedDownscale = currentDownscaleRatio,
+                                appUid = appUid
                             )
                         } else {
                             ranges != null &&

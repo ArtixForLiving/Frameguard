@@ -172,4 +172,38 @@ class WatchdogForegroundTest {
         assertEquals(ClosedLoopStatus.IDLE, resolveTerminalClosedLoopStatus(ClosedLoopStatus.THERMAL_30))
         assertEquals(ClosedLoopStatus.IDLE, resolveTerminalClosedLoopStatus(ClosedLoopStatus.IDLE))
     }
+
+    @Test
+    fun testEvaluateSurfaceFlingerAuditDetectsUidSetFrameRateOverride() {
+        val game30Dump = "[Name:com.example.game Modes:{2=[Game Mode:2, Scaling:1.0, Use Angle:false, Fps:30]}]"
+        val sfOverridden = """
+            displayManagerPolicy={primaryRanges={physical=[24.00 Hz, 60.00 Hz], render=[24.00 Hz, 60.00 Hz]}}
+            FrameRateOverrides=
+                setFrameRate=
+                    (uid, frameRate)={10419, 30.00 Hz} {10425, 120.00 Hz}
+        """.trimIndent()
+
+        assertTrue(
+            evaluateSurfaceFlingerAudit(
+                sfOutput = sfOverridden,
+                gameOutput = game30Dump,
+                packageName = "com.example.game",
+                expectedFps = 30,
+                expectedMaxHz = 60f,
+                expectedDownscale = "1.0",
+                appUid = 10419
+            )
+        )
+        assertFalse(
+            evaluateSurfaceFlingerAudit(
+                sfOutput = sfOverridden,
+                gameOutput = game30Dump,
+                packageName = "com.example.game",
+                expectedFps = 30,
+                expectedMaxHz = 60f,
+                expectedDownscale = "1.0",
+                appUid = 10425
+            )
+        )
+    }
 }

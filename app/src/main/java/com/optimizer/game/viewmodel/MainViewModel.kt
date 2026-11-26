@@ -130,7 +130,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.miHoYo.GenshinImpact", "com.HoYoverse.GenshinImpact", "com.miHoYo.Yuanshen"),
                 recommendedFps = 60,
                 maxSupportedFps = 60,
-                recommendationReason = "Engine hard-capped at 60 FPS · 60Hz lock eliminates thermal throttling",
+                recommendationReason = "60Hz display lock active · In-game FPS setting takes priority over 30 FPS clamp",
                 supportsRenderScale = true,
                 recommendedScale = 75,
                 scaleReason = "75% cuts GPU load by 44% for steadier 60 FPS."
@@ -152,7 +152,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 candidatePackages = listOf("com.roblox.client"),
                 recommendedFps = 60,
                 maxSupportedFps = 60,
-                recommendationReason = "Official mobile client capped at 60 FPS · 60Hz lock eliminates frame judder & saves battery",
+                recommendationReason = "Engine requests 120Hz via setFrameRate · System FPS/Hz lock may be overridden",
                 supportsRenderScale = false
             ),
             SupportedGameDef(
@@ -902,7 +902,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val savedScale = if (_deviceProfile.value.supportsWmWrite) {
             prefs.getInt("${app.packageName}_scale", 100)
         } else 100
-        val savedDownscale = if (_deviceProfile.value.supportsGameManager && app.supportsRenderScale) {
+        val savedDownscale = if (_deviceProfile.value.supportsGameManager) {
             GameOptimizerEngine.normalizeDownscaleRatio(
                 prefs.getString("${app.packageName}_downscale", "1.0") ?: "1.0"
             )
