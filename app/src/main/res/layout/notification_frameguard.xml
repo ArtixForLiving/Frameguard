@@ -40,13 +40,13 @@
             android:paddingVertical="2dp" />
     </LinearLayout>
 
-    <!-- Telemetry Row: Temp, Doze, Privilege -->
+    <!-- Telemetry Row: Temp, DND, Privilege -->
     <TextView
         android:id="@+id/notification_telemetry"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:text="TEMP: 36.2°C | DOZE: ON | UID 2000"
+        android:text="TEMP: --.-°C | DND: ON | UID 2000"
         android:textColor="#767676"
         android:textSize="10sp"
         android:typeface="monospace"

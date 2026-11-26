@@ -14,7 +14,7 @@ class DisplayGeometryUnitTest {
         val sizeOutput = "Physical size: 1080x2400"
         val densityOutput = "Physical density: 440"
 
-        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)
+        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)!!
 
         assertEquals(1080, snapshot.physicalWidth)
         assertEquals(2400, snapshot.physicalHeight)
@@ -34,7 +34,7 @@ class DisplayGeometryUnitTest {
         val sizeOutput = "Physical size: 1080x2400"
         val densityOutput = "Physical density: 440\nOverride density: 209"
 
-        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)
+        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)!!
 
         assertEquals(1080, snapshot.physicalWidth)
         assertEquals(2400, snapshot.physicalHeight)
@@ -55,7 +55,7 @@ class DisplayGeometryUnitTest {
         val sizeOutput = "Physical size: 1080x2400\nOverride size: 720x1600"
         val densityOutput = "Physical density: 440"
 
-        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)
+        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)!!
 
         assertEquals(1080, snapshot.physicalWidth)
         assertEquals(2400, snapshot.physicalHeight)
@@ -76,7 +76,7 @@ class DisplayGeometryUnitTest {
         val sizeOutput = "Physical size: 1080x2400\nOverride size: 720x1600"
         val densityOutput = "Physical density: 440\nOverride density: 209"
 
-        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)
+        val snapshot = GameOptimizerEngine.parseWmGeometry(sizeOutput, densityOutput)!!
 
         assertEquals(720, snapshot.overrideWidth)
         assertEquals(1600, snapshot.overrideHeight)
@@ -90,5 +90,12 @@ class DisplayGeometryUnitTest {
     fun testBuildRestoreCommandsNullBypassesWmCommands() {
         val restoreCommands = GameOptimizerEngine.buildRestoreCommands(null)
         assertTrue("Null snapshot on 100% native scale must return empty command list", restoreCommands.isEmpty())
+    }
+
+    @Test
+    fun testParseWmGeometryReturnsNullOnInvalidInputWithoutFakeFallback() {
+        assertNull(GameOptimizerEngine.parseWmGeometry("", ""))
+        assertNull(GameOptimizerEngine.parseWmGeometry("ERROR: permission denied", "Physical density: 440"))
+        assertNull(GameOptimizerEngine.parseWmGeometry("Physical size: 1080x2400", "ERROR: failed"))
     }
 }

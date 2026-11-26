@@ -12,8 +12,8 @@ android {
         applicationId = "com.optimizer.game"
         minSdk = 31
         targetSdk = 37
-        versionCode = 107
-        versionName = "1.0.7"
+        versionCode = 108
+        versionName = "1.0.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -81,7 +81,6 @@ dependencies {
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
 
-    implementation(libs.dadb)
     implementation(libs.bouncycastle.bcpkix)
     implementation(libs.bouncycastle.bcprov)
 

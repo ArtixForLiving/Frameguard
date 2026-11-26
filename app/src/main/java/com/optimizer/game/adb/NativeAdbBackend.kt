@@ -4,12 +4,17 @@ import android.content.Context
 import com.optimizer.game.privilege.PrivilegeBackend
 import com.optimizer.game.privilege.PrivilegeSource
 import com.optimizer.game.privilege.PrivilegeState
+import com.optimizer.game.privilege.ShellResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
@@ -19,66 +24,88 @@ class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
     override val state: StateFlow<PrivilegeState> = _state.asStateFlow()
 
     val mdnsDiscovery = AdbMdnsDiscovery(context)
+    private var watcherJob: Job? = null
+    @Volatile
+    private var lastBootstrapFailureMs: Long = 0L
+
+    companion object {
+        private const val BOOTSTRAP_FAILURE_COOLDOWN_MS = 5_000L
+    }
 
     init {
+        startBackgroundDiscovery()
+    }
+
+    private fun startBackgroundDiscovery() {
         mdnsDiscovery.startDiscovery()
-        checkConnection()
 
         // 1. Observe mDNS discovered connect port
         scope.launch {
             mdnsDiscovery.connectPort.collect { port ->
                 if (port != null) {
                     AdbPortStore.savePort(context, port)
-                    if (!_state.value.isConnected) {
-                        NativeDaemonManager.ensureDaemonStarted(context, port)
-                        checkConnection()
+                    if (!_state.value.isConnected && !isInBootstrapCooldown()) {
+                        val started = NativeDaemonManager.ensureDaemonStarted(context, port)
+                        if (started) {
+                            _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                        } else {
+                            lastBootstrapFailureMs = System.currentTimeMillis()
+                        }
                     }
                 }
             }
         }
 
-        // 2. Parallel background discovery via cached port and fast port scan
+        // 2. Fallback discovery via cached port / port scan only if mDNS hasn't connected within 1.2s
         scope.launch {
-            if (!_state.value.isConnected) {
-                // If daemon is already running, bind immediately
-                if (NativeDaemonManager.isDaemonAlive(context)) {
-                    _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
-                    return@launch
-                }
-                // Try cached port or scan loopback
+            if (NativeDaemonManager.isDaemonAlive(context)) {
+                _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                return@launch
+            }
+            delay(1200)
+            if (!_state.value.isConnected && mdnsDiscovery.connectPort.value == null) {
                 val port = AdbPortScanner.findOpenPort(context)
                 if (port != null && !_state.value.isConnected) {
-                    NativeDaemonManager.ensureDaemonStarted(context, port)
-                    checkConnection()
+                    val started = NativeDaemonManager.ensureDaemonStarted(context, port)
+                    if (started) {
+                        _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                    }
                 }
             }
         }
 
-        // 3. Continuous watcher while UNBOUND so the UI switches to green in real-time
-        // without requiring the user to kill or restart the app after pairing
-        scope.launch {
-            while (!_state.value.isConnected) {
-                kotlinx.coroutines.delay(1200)
-                if (NativeDaemonManager.isDaemonAlive(context)) {
+        startWatcher()
+    }
+
+    private fun startWatcher() {
+        if (watcherJob?.isActive == true) return
+        watcherJob = scope.launch {
+            while (isActive) {
+                delay(1200)
+                if (!_state.value.isConnected && NativeDaemonManager.isDaemonAlive(context)) {
                     _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
-                    break
                 }
             }
         }
     }
 
     fun checkConnection() {
+        if (watcherJob == null || watcherJob?.isActive != true) {
+            startWatcher()
+        }
         scope.launch {
             val alive = NativeDaemonManager.isDaemonAlive(context)
             if (alive) {
                 _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
             } else {
                 val connectPort = mdnsDiscovery.connectPort.value ?: AdbPortStore.getPort(context)
-                if (connectPort != null) {
+                if (connectPort != null && !isInBootstrapCooldown()) {
                     val started = NativeDaemonManager.ensureDaemonStarted(context, connectPort)
                     if (started) {
                         _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
                         return@launch
+                    } else {
+                        lastBootstrapFailureMs = System.currentTimeMillis()
                     }
                 }
                 _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
@@ -86,23 +113,74 @@ class NativeAdbBackend(private val context: Context) : PrivilegeBackend {
         }
     }
 
-    override suspend fun exec(command: String): String {
-        if (NativeDaemonManager.isDaemonAlive(context)) {
-            return NativeDaemonManager.exec(context, command)
+    private fun isInBootstrapCooldown(): Boolean =
+        System.currentTimeMillis() - lastBootstrapFailureMs < BOOTSTRAP_FAILURE_COOLDOWN_MS
+
+    override suspend fun exec(command: String): ShellResult =
+        executeWithFallback(
+            daemonExec = { NativeDaemonManager.exec(context, command) },
+            adbFallbackExec = { port -> AdbTlsClient.executeCommand(context, port, command) }
+        )
+
+    override suspend fun execArgs(args: List<String>): ShellResult {
+        if (args.isEmpty()) {
+            return ShellResult(exitCode = 2, stdout = "", stderr = "Empty argument list")
         }
-        val port = mdnsDiscovery.connectPort.value ?: AdbPortStore.getPort(context) ?: AdbPortScanner.findOpenPort(context)
+        return executeWithFallback(
+            daemonExec = { NativeDaemonManager.execArgs(context, args) },
+            adbFallbackExec = { port ->
+                val escapedCommand = args.joinToString(" ") { arg ->
+                    "'" + arg.replace("'", "'\"'\"'") + "'"
+                }
+                AdbTlsClient.executeCommand(context, port, escapedCommand)
+            }
+        )
+    }
+
+    private suspend fun executeWithFallback(
+        daemonExec: suspend () -> ShellResult,
+        adbFallbackExec: suspend (Int) -> ShellResult
+    ): ShellResult {
+        if (NativeDaemonManager.isDaemonAlive(context)) {
+            val result = daemonExec()
+            if (result.transportError != null) {
+                _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
+            }
+            return result
+        }
+
+        val port = mdnsDiscovery.connectPort.value
+            ?: AdbPortStore.getPort(context)
+            ?: AdbPortScanner.findOpenPort(context)
+
         if (port != null) {
             val started = NativeDaemonManager.ensureDaemonStarted(context, port)
-            if (started) {
-                return NativeDaemonManager.exec(context, command)
+            val result = if (started) {
+                _state.value = PrivilegeState(true, PrivilegeSource.NATIVE_ADB, "UID 2000 · ADB")
+                daemonExec()
+            } else {
+                adbFallbackExec(port)
             }
-            return AdbTlsClient.executeCommand(context, port, command)
+            if (result.transportError != null) {
+                _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
+            }
+            return result
         }
-        return "ERROR: Native ADB daemon not connected"
+
+        _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
+        return ShellResult(
+            exitCode = -1,
+            stdout = "",
+            stderr = "",
+            transportError = "Native ADB daemon not connected"
+        )
     }
 
     override fun disconnect() {
         mdnsDiscovery.stopDiscovery()
+        watcherJob?.cancel()
+        watcherJob = null
+        scope.coroutineContext.cancelChildren()
         _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
     }
 }

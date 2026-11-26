@@ -12,6 +12,7 @@ import androidx.core.app.RemoteInput
 import com.optimizer.game.R
 import com.optimizer.game.optimizer.GameOptimizerEngine
 import com.optimizer.game.privilege.PrivilegeManager
+import com.optimizer.game.ui.components.stopActivePairingDiscovery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -87,59 +88,79 @@ class AdbPairingReceiver : BroadcastReceiver() {
 
         if (code.isNullOrEmpty()) return
 
+        val pendingResult = goAsync()
+        stopActivePairingDiscovery()
+        val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
-            // Support both plain "678036" and explicit "<port> <code>" (e.g. "45065 678036")
-            var explicitPort: Int? = null
-            var cleanCode = code
-            val parts = code.split(Regex("[\\s:]+"))
-            if (parts.size >= 2) {
-                val parsedPort = parts[0].toIntOrNull()
-                if (parsedPort != null && parsedPort in 1024..65535) {
-                    explicitPort = parsedPort
-                    cleanCode = parts[1]
+            var pairedSuccess = false
+            try {
+                // Support both plain "678036" and explicit "<port> <code>" (e.g. "45065 678036")
+                var explicitPort: Int? = null
+                var cleanCode = code
+                val parts = code.split(Regex("[\\s:]+"))
+                if (parts.size >= 2) {
+                    val parsedPort = parts[0].toIntOrNull()
+                    if (parsedPort != null && parsedPort in 1024..65535) {
+                        explicitPort = parsedPort
+                        cleanCode = parts[1]
+                    }
                 }
-            }
 
-            GameOptimizerEngine.log("Initiating SPAKE2 TLS handshake with code: $cleanCode", GameOptimizerEngine.LogType.COMMAND)
+                GameOptimizerEngine.log("Initiating SPAKE2 TLS handshake...", GameOptimizerEngine.LogType.COMMAND)
 
-            val targetPort = explicitPort ?: if (port > 0) port else {
-                val discovery = AdbMdnsDiscovery(context)
-                discovery.startDiscovery()
-                var resolved: Int? = null
-                for (i in 0 until 15) {
-                    resolved = discovery.pairingPort.value
-                    if (resolved != null) break
-                    kotlinx.coroutines.delay(200)
+                val targetPort = explicitPort ?: if (port > 0) port else {
+                    val discovery = AdbMdnsDiscovery(appContext)
+                    discovery.startDiscovery()
+                    var resolved: Int? = null
+                    for (i in 0 until 15) {
+                        resolved = discovery.pairingPort.value
+                        if (resolved != null) break
+                        kotlinx.coroutines.delay(200)
+                    }
+                    discovery.stopDiscovery()
+                    resolved ?: -1
                 }
-                discovery.stopDiscovery()
-                resolved ?: -1
+
+                if (targetPort <= 0) {
+                    GameOptimizerEngine.log("[ERR] Pairing port not discovered. Ensure Wireless Debugging is active on Wi-Fi.", GameOptimizerEngine.LogType.ERROR)
+                    val failNotif = NotificationCompat.Builder(appContext, CHANNEL_ID)
+                        .setSmallIcon(R.drawable.ic_notification)
+                        .setContentTitle("Pairing Failed")
+                        .setContentText("Pairing port not discovered. Input '<port> <code>' to specify manually.")
+                        .setAutoCancel(true)
+                        .build()
+                    manager?.notify(NOTIFICATION_ID, failNotif)
+                    return@launch
+                }
+
+                pairedSuccess = AdbPairingClient.pair(appContext, targetPort, cleanCode)
+                if (pairedSuccess) {
+                    GameOptimizerEngine.log("Wireless ADB paired successfully (RSA public key accepted)", GameOptimizerEngine.LogType.STDOUT)
+                    val successNotif = NotificationCompat.Builder(appContext, CHANNEL_ID)
+                        .setSmallIcon(R.drawable.ic_notification)
+                        .setContentTitle("Pairing Successful")
+                        .setContentText("FrameGuard authorized under UID 2000")
+                        .setAutoCancel(true)
+                        .build()
+                    manager?.notify(NOTIFICATION_ID, successNotif)
+                } else {
+                    GameOptimizerEngine.log("[ERR] SPAKE2 handshake failed: expired code or TLS rejection.", GameOptimizerEngine.LogType.ERROR)
+                    val failNotif = NotificationCompat.Builder(appContext, CHANNEL_ID)
+                        .setSmallIcon(R.drawable.ic_notification)
+                        .setContentTitle("Pairing Handshake Failed")
+                        .setContentText("Incorrect code or expired pairing dialog")
+                        .setAutoCancel(true)
+                        .build()
+                    manager?.notify(NOTIFICATION_ID, failNotif)
+                }
+            } finally {
+                // Finish broadcast immediately so Android never triggers a BroadcastReceiver ANR.
+                pendingResult.finish()
             }
 
-            if (targetPort <= 0) {
-                GameOptimizerEngine.log("[ERR] Pairing port not discovered. Ensure Wireless Debugging is active on Wi-Fi.", GameOptimizerEngine.LogType.ERROR)
-                val failNotif = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_notification)
-                    .setContentTitle("Pairing Failed")
-                    .setContentText("Pairing port not discovered. Input '<port> <code>' to specify manually.")
-                    .setAutoCancel(true)
-                    .build()
-                manager?.notify(NOTIFICATION_ID, failNotif)
-                return@launch
-            }
-
-            val success = AdbPairingClient.pair(context, targetPort, cleanCode)
-            if (success) {
-                GameOptimizerEngine.log("Wireless ADB paired successfully (RSA public key accepted)", GameOptimizerEngine.LogType.STDOUT)
-                val successNotif = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_notification)
-                    .setContentTitle("Pairing Successful")
-                    .setContentText("FrameGuard authorized under UID 2000")
-                    .setAutoCancel(true)
-                    .build()
-                manager?.notify(NOTIFICATION_ID, successNotif)
-
-                // Bootstrap daemon right after pairing
-                val discovery = AdbMdnsDiscovery(context)
+            if (pairedSuccess) {
+                PrivilegeManager.init(appContext)
+                val discovery = AdbMdnsDiscovery(appContext)
                 discovery.startDiscovery()
                 var connectPort: Int? = null
                 for (i in 0 until 15) {
@@ -149,26 +170,11 @@ class AdbPairingReceiver : BroadcastReceiver() {
                 }
                 discovery.stopDiscovery()
 
-                if (connectPort == null) {
-                    connectPort = AdbPortScanner.findOpenPort(context)
-                }
-
                 if (connectPort != null) {
                     GameOptimizerEngine.log("Starting UID 2000 daemon via port $connectPort...", GameOptimizerEngine.LogType.COMMAND)
-                    NativeDaemonManager.ensureDaemonStarted(context, connectPort)
+                    NativeDaemonManager.ensureDaemonStarted(appContext, connectPort)
                 }
-
-                PrivilegeManager.init(context)
                 PrivilegeManager.refreshState()
-            } else {
-                GameOptimizerEngine.log("[ERR] SPAKE2 handshake failed: expired code or TLS rejection.", GameOptimizerEngine.LogType.ERROR)
-                val failNotif = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_notification)
-                    .setContentTitle("Pairing Handshake Failed")
-                    .setContentText("Incorrect code or expired pairing dialog")
-                    .setAutoCancel(true)
-                    .build()
-                manager?.notify(NOTIFICATION_ID, failNotif)
             }
         }
     }

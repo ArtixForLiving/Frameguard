@@ -6,18 +6,19 @@
 # AIDL and shell IPC services
 -keep class com.optimizer.game.IShellService { *; }
 -keep class com.optimizer.game.IShellService$* { *; }
+-keep class com.optimizer.game.privilege.ShellResult { *; }
+-keep class com.optimizer.game.privilege.ShellResult$* { *; }
+-keepclassmembers class com.optimizer.game.privilege.ShellResult {
+    public static final ** CREATOR;
+}
 -keep class com.optimizer.game.shizuku.ShellUserService { *; }
 
 # Native ADB Daemon entrypoint for app_process execution
 -keep class com.optimizer.game.adb.DaemonServer { *; }
+-keep class com.optimizer.game.adb.DaemonServer$* { *; }
 -keepclassmembers class com.optimizer.game.adb.DaemonServer {
     public static void main(java.lang.String[]);
 }
-
-# dadb library rules
--keep class dadb.** { *; }
--keep interface dadb.** { *; }
--dontwarn dadb.**
 
 # BouncyCastle cryptographic provider and ASN.1 / X.509 classes
 -keep class org.bouncycastle.asn1.** { *; }

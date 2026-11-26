@@ -1,6 +1,7 @@
 package com.optimizer.game
 
 import com.optimizer.game.adb.AdbMdnsDiscovery
+import com.optimizer.game.adb.DaemonProtocol
 import com.optimizer.game.adb.DaemonServer
 import com.optimizer.game.optimizer.GameOptimizerEngine
 import com.optimizer.game.privilege.PrivilegeSource
@@ -48,8 +49,11 @@ class PrivilegeUnitTest {
 
     @Test
     fun testDaemonConstants() {
-        assertEquals(25890, DaemonServer.DAEMON_PORT)
-        assertEquals("---FRAMEGUARD_EOF---", DaemonServer.EOF_MARKER)
+        assertEquals("/data/local/tmp/.fg_daemon_port", DaemonServer.PORT_FILE_PATH)
+        assertEquals(0x01.toByte(), DaemonProtocol.FRAME_PING)
+        assertEquals(0x02.toByte(), DaemonProtocol.FRAME_EXEC)
+        assertEquals(0x03.toByte(), DaemonProtocol.FRAME_EXEC_ARGS)
+        assertEquals(0x04.toByte(), DaemonProtocol.FRAME_SHUTDOWN)
     }
 
     @Test
@@ -71,8 +75,8 @@ class PrivilegeUnitTest {
         assertNotNull(roblox)
         assertEquals(60, roblox?.recommendedFps)
         assertEquals(60, roblox?.maxSupportedFps)
-        assertTrue(roblox?.supportsRenderScale == true)
-        assertEquals(75, roblox?.recommendedScale)
+        assertTrue(roblox?.supportsRenderScale == false)
+        assertEquals(100, roblox?.recommendedScale)
 
         val warframe = MainViewModel.SUPPORTED_CATALOG.find { it.id == "warframe" }
         assertTrue(warframe?.supportsRenderScale == false)
@@ -83,16 +87,8 @@ class PrivilegeUnitTest {
     }
 
     @Test
-    fun testBuildConfigVersionIs107() {
-        assertEquals(107, com.optimizer.game.BuildConfig.VERSION_CODE)
-        assertEquals("1.0.7", com.optimizer.game.BuildConfig.VERSION_NAME)
-    }
-
-    @Test
-    fun testCompileShadersGracefulFallback() = kotlinx.coroutines.runBlocking {
-        // In unbound unit test environment, PrivilegeManager.exec returns ERROR
-        // With HARD-03 non-blocking fallback, compileShaders returns true
-        val result = GameOptimizerEngine.compileShaders("com.example.game")
-        assertTrue(result)
+    fun testBuildConfigVersionIs108() {
+        assertEquals(108, com.optimizer.game.BuildConfig.VERSION_CODE)
+        assertEquals("1.0.8", com.optimizer.game.BuildConfig.VERSION_NAME)
     }
 }

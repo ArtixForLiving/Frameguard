@@ -1,8 +1,8 @@
 package com.optimizer.game.shizuku
 
 import com.optimizer.game.IShellService
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import com.optimizer.game.privilege.ShellCommandRunner
+import com.optimizer.game.privilege.ShellResult
 import kotlin.system.exitProcess
 
 /**
@@ -10,29 +10,22 @@ import kotlin.system.exitProcess
  */
 class ShellUserService : IShellService.Stub() {
 
-    override fun runCommand(command: String): String {
-        return try {
-            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
-            val stdOut = BufferedReader(InputStreamReader(process.inputStream))
-            val stdErr = BufferedReader(InputStreamReader(process.errorStream))
-            val output = StringBuilder()
+    override fun runCommand(command: String): ShellResult =
+        ShellCommandRunner.runCommand(command)
 
-            var line: String?
-            while (stdOut.readLine().also { line = it } != null) {
-                output.append(line).append("\n")
-            }
-            while (stdErr.readLine().also { line = it } != null) {
-                output.append(line).append("\n")
-            }
-
-            process.waitFor()
-            output.toString().trimEnd()
-        } catch (e: Exception) {
-            "ERROR: ${e.message}"
+    override fun runArgs(args: Array<String>?): ShellResult {
+        if (args.isNullOrEmpty()) {
+            return ShellResult(exitCode = 2, stdout = "", stderr = "Empty argument list")
         }
+        return ShellCommandRunner.runArgs(args.toList())
     }
 
     override fun destroy() {
         exitProcess(0)
+    }
+
+    companion object {
+        internal fun tokenizeCommand(command: String): List<String> =
+            ShellCommandRunner.tokenizeCommand(command)
     }
 }

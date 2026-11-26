@@ -16,6 +16,7 @@ data class PrivilegeState(
 
 interface PrivilegeBackend {
     val state: StateFlow<PrivilegeState>
-    suspend fun exec(command: String): String
+    suspend fun exec(command: String): ShellResult
+    suspend fun execArgs(args: List<String>): ShellResult
     fun disconnect()
 }
