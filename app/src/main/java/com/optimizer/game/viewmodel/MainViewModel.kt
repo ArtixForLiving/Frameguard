@@ -446,8 +446,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (privilegeState.value.isConnected) {
             try {
-                val dump = PrivilegeManager.exec("dumpsys thermalservice")
-                temp = extractHalThermal(dump)
+                val dumpRes = PrivilegeManager.exec("dumpsys thermalservice")
+                if (dumpRes.isOk) {
+                    temp = extractHalThermal(dumpRes.stdout)
+                }
             } catch (_: Exception) {}
         }
 

@@ -22,30 +22,33 @@ object AdbPortScanner {
     }
 
     /**
-     * Rapidly checks cached port or scans standard ephemeral ports (32768..55000)
-     * over 127.0.0.1 in parallel chunks to find the active ADB daemon port.
+     * Checks cached port or scans ephemeral ports (32768..55000) over 127.0.0.1,
+     * verifying authenticated ADB TLS connectivity before persisting any port.
      */
     suspend fun findOpenPort(context: Context): Int? = withContext(Dispatchers.IO) {
-        // 1. Check cached port first
+        val daemonPort = NativeDaemonManager.currentPort
+
+        // 1. Check cached port first, verifying ADB TLS handshake
         AdbPortStore.getPort(context)?.let { cached ->
-            if (isPortListening(cached, 50)) {
+            if (cached != daemonPort && isPortListening(cached, 50) && AdbTlsClient.canConnect(context, cached)) {
                 return@withContext cached
             }
         }
 
-        // 2. Parallel scan ephemeral range in chunks of 200
+        // 2. Parallel scan ephemeral range in chunks of 200, verifying ADB TLS before persisting
         val candidatePorts = (32768..55000).toList()
         for (chunk in candidatePorts.chunked(200)) {
             val deferreds = chunk.map { port ->
                 async {
-                    if (isPortListening(port, 25)) port else null
+                    if (port != daemonPort && isPortListening(port, 25)) port else null
                 }
             }
             val openPorts = deferreds.awaitAll().filterNotNull()
-            val valid = openPorts.firstOrNull { it != DaemonServer.DAEMON_PORT }
-            if (valid != null) {
-                AdbPortStore.savePort(context, valid)
-                return@withContext valid
+            for (candidate in openPorts) {
+                if (AdbTlsClient.canConnect(context, candidate)) {
+                    AdbPortStore.savePort(context, candidate)
+                    return@withContext candidate
+                }
             }
         }
         null

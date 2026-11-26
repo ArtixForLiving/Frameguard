@@ -1,21 +1,27 @@
 package com.optimizer.game.adb
 
 import android.content.Context
+import com.optimizer.game.privilege.ShellResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.File
-import java.io.InputStreamReader
-import java.io.PrintWriter
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.UUID
 
 object NativeDaemonManager {
 
     private const val TOKEN_FILE = "daemon_auth_token"
     private var cachedToken: String? = null
+
+    @Volatile
+    var currentPort: Int? = null
 
     @Synchronized
     fun getOrCreateAuthToken(context: Context): String {
@@ -35,32 +41,20 @@ object NativeDaemonManager {
     }
 
     /**
-     * Checks if the daemon process is running and responding over TCP loopback.
+     * Checks if the daemon process is running on currentPort and passes mutual auth + PING.
      */
     suspend fun isDaemonAlive(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val port = currentPort ?: return@withContext false
         val token = getOrCreateAuthToken(context)
-        var socket: Socket? = null
-        try {
-            socket = Socket()
-            socket.connect(InetSocketAddress("127.0.0.1", DaemonServer.DAEMON_PORT), 1500)
-            socket.soTimeout = 2000
-
-            val writer = PrintWriter(socket.getOutputStream(), true)
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-
-            writer.println(token)
-            val authResp = reader.readLine()
-            if (authResp != "OK: AUTHENTICATED") {
-                return@withContext false
-            }
-
-            writer.println("PING")
-            val pingResp = reader.readLine()
-            pingResp == "PONG"
-        } catch (_: Exception) {
+        val result = sendFrameToPort(port, token, timeoutMs = 2_000) { out ->
+            out.writeByte(DaemonProtocol.FRAME_PING.toInt())
+            out.flush()
+        }
+        if (result.isOk && result.stdout == "PONG") {
+            true
+        } else {
+            currentPort = null
             false
-        } finally {
-            try { socket?.close() } catch (_: Exception) {}
         }
     }
 
@@ -70,53 +64,138 @@ object NativeDaemonManager {
     suspend fun ensureDaemonStarted(context: Context, connectPort: Int): Boolean = withContext(Dispatchers.IO) {
         if (isDaemonAlive(context)) return@withContext true
 
+        // Reuse an already-running daemon if its ephemeral port file is valid and passes mutual auth.
+        val existingPort = readDaemonPortOverAdb(context, connectPort)
+        if (existingPort != null) {
+            currentPort = existingPort
+            if (isDaemonAlive(context)) return@withContext true
+        }
+
         val token = getOrCreateAuthToken(context)
         val apkPath = context.packageCodePath
-        val bootstrapCmd = "nohup app_process -Djava.class.path=$apkPath /system/bin com.optimizer.game.adb.DaemonServer $token > /dev/null 2>&1 &"
+        // Feed token via stdin so /proc/<pid>/cmdline never exposes it; read/printf are shell builtins.
+        val bootstrapCmd = "rm -f ${DaemonServer.PORT_FILE_PATH}; " +
+            "IFS= read -r FG_TOK; " +
+            "printf '%s\\n' \"\$FG_TOK\" | nohup app_process -Djava.class.path='$apkPath' " +
+            "/system/bin com.optimizer.game.adb.DaemonServer >/dev/null 2>&1 &"
 
-        AdbTlsClient.executeCommand(context, connectPort, bootstrapCmd)
+        val launchResult = AdbTlsClient.execDetached(
+            context = context,
+            port = connectPort,
+            command = bootstrapCmd,
+            stdinPayload = "$token\n"
+        )
+        if (launchResult.transportError != null) {
+            return@withContext false
+        }
 
-        // Wait up to 3 seconds for ServerSocket to become ready
-        for (i in 0 until 6) {
-            delay(500)
-            if (isDaemonAlive(context)) {
-                return@withContext true
+        for (i in 0 until 8) {
+            delay(400)
+            val discoveredPort = readDaemonPortOverAdb(context, connectPort)
+            if (discoveredPort != null) {
+                currentPort = discoveredPort
+                if (isDaemonAlive(context)) {
+                    return@withContext true
+                }
             }
         }
         false
     }
 
+    private suspend fun readDaemonPortOverAdb(context: Context, connectPort: Int): Int? {
+        val res = AdbTlsClient.executeCommand(context, connectPort, "cat ${DaemonServer.PORT_FILE_PATH}")
+        if (!res.isOk) return null
+        val parsed = res.stdout.trim().toIntOrNull() ?: return null
+        return if (parsed in 1024..65535) parsed else null
+    }
+
     /**
-     * Executes a shell command via the authenticated TCP loopback socket connection.
+     * Executes a shell command via the authenticated ephemeral TCP loopback socket.
      */
-    suspend fun exec(context: Context, command: String): String = withContext(Dispatchers.IO) {
+    suspend fun exec(context: Context, command: String): ShellResult = withContext(Dispatchers.IO) {
+        val port = currentPort ?: return@withContext ShellResult(
+            exitCode = -1,
+            stdout = "",
+            stderr = "",
+            transportError = "Local daemon port not available"
+        )
         val token = getOrCreateAuthToken(context)
+        val timeoutMs = if (command.contains("package compile")) 120_000 else 15_000
+        val result = sendFrameToPort(port, token, timeoutMs) { out ->
+            out.writeByte(DaemonProtocol.FRAME_EXEC.toInt())
+            DaemonProtocol.writeStringFrame(out, command)
+            out.flush()
+        }
+        if (result.transportError != null) {
+            currentPort = null
+        }
+        result
+    }
+
+    /**
+     * Executes raw argument vector via the authenticated ephemeral TCP loopback socket.
+     */
+    suspend fun execArgs(context: Context, args: List<String>): ShellResult = withContext(Dispatchers.IO) {
+        if (args.isEmpty()) {
+            return@withContext ShellResult(exitCode = 2, stdout = "", stderr = "Empty argument list")
+        }
+        val port = currentPort ?: return@withContext ShellResult(
+            exitCode = -1,
+            stdout = "",
+            stderr = "",
+            transportError = "Local daemon port not available"
+        )
+        val token = getOrCreateAuthToken(context)
+        val timeoutMs = if (args.any { it.contains("compile") }) 120_000 else 15_000
+        val result = sendFrameToPort(port, token, timeoutMs) { out ->
+            out.writeByte(DaemonProtocol.FRAME_EXEC_ARGS.toInt())
+            out.writeInt(args.size)
+            for (arg in args) {
+                DaemonProtocol.writeStringFrame(out, arg)
+            }
+            out.flush()
+        }
+        if (result.transportError != null) {
+            currentPort = null
+        }
+        result
+    }
+
+    private fun sendFrameToPort(
+        port: Int,
+        token: String,
+        timeoutMs: Int,
+        writeRequest: (DataOutputStream) -> Unit
+    ): ShellResult {
         var socket: Socket? = null
-        try {
+        return try {
             socket = Socket()
-            socket.connect(InetSocketAddress("127.0.0.1", DaemonServer.DAEMON_PORT), 2000)
-            val isLongRunning = command.contains("package compile")
-            socket.soTimeout = if (isLongRunning) 120_000 else 15_000
+            socket.connect(InetSocketAddress("127.0.0.1", port), 2_000)
+            socket.soTimeout = timeoutMs
 
-            val writer = PrintWriter(socket.getOutputStream(), true)
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+            val input = DataInputStream(BufferedInputStream(socket.getInputStream()))
+            val out = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
 
-            writer.println(token)
-            val authResp = reader.readLine()
-            if (authResp != "OK: AUTHENTICATED") {
-                return@withContext "ERROR: Local daemon authentication failed: $authResp"
+            if (!DaemonProtocol.authenticateClient(input, out, token)) {
+                return ShellResult(
+                    exitCode = -1,
+                    stdout = "",
+                    stderr = "",
+                    transportError = "Local daemon mutual authentication failed"
+                )
             }
 
-            writer.println(command)
-            val output = StringBuilder()
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                if (line == DaemonServer.EOF_MARKER) break
-                output.append(line).append("\n")
-            }
-            output.toString().trimEnd()
+            writeRequest(out)
+            DaemonProtocol.readResultFrame(input)
+        } catch (_: SocketTimeoutException) {
+            ShellResult(exitCode = -1, stdout = "", stderr = "", timedOut = true)
         } catch (e: Exception) {
-            "ERROR: ${e.message}"
+            ShellResult(
+                exitCode = -1,
+                stdout = "",
+                stderr = "",
+                transportError = e.message ?: "Local daemon transport error"
+            )
         } finally {
             try { socket?.close() } catch (_: Exception) {}
         }

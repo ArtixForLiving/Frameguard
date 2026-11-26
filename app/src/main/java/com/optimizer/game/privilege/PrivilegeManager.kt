@@ -55,7 +55,6 @@ object PrivilegeManager {
                     activeBackend = ShizukuManager
                     _state.value = shizukuState
                 } else {
-                    // Check if native adb backend is connected
                     val nativeState = nativeAdbBackend?.state?.value
                     if (nativeState != null && nativeState.isConnected) {
                         activeBackend = nativeAdbBackend!!
@@ -82,8 +81,8 @@ object PrivilegeManager {
         }
     }
 
-    suspend fun execResult(command: String): ShellResult {
-        val result = activeBackend.execResult(command)
+    suspend fun exec(command: String): ShellResult {
+        val result = activeBackend.exec(command)
         if (result.transportError != null) {
             _state.value = PrivilegeState(false, PrivilegeSource.NONE, "UNBOUND")
             refreshState()
@@ -98,10 +97,6 @@ object PrivilegeManager {
             refreshState()
         }
         return result
-    }
-
-    suspend fun exec(command: String): String {
-        return execResult(command).toLegacyString()
     }
 
     fun disconnect() {

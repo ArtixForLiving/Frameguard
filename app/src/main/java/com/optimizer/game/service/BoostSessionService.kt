@@ -20,6 +20,7 @@ import com.optimizer.game.R
 import com.optimizer.game.optimizer.GameOptimizerEngine
 import com.optimizer.game.privilege.PrivilegeManager
 import com.optimizer.game.privilege.PrivilegeSource
+import com.optimizer.game.privilege.ShellResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -101,6 +102,16 @@ enum class WatchdogDecision {
 class WatchdogCycleEvaluator(private val requiredConsecutiveMisses: Int = 2) {
     var consecutiveEmptyCount: Int = 0
         private set
+
+    fun evaluate(result: ShellResult): WatchdogDecision {
+        if (!result.isOk && result.transportError != null) {
+            return WatchdogDecision.GLITCH
+        }
+        if (result.timedOut || (result.exitCode != 0 && result.exitCode != 1)) {
+            return WatchdogDecision.GLITCH
+        }
+        return evaluate(result.stdout)
+    }
 
     fun evaluate(pidOut: String): WatchdogDecision {
         val trimmed = pidOut.trim()
@@ -282,10 +293,11 @@ class BoostSessionService : Service() {
                         }
                     }
 
-                    val pidOut = PrivilegeManager.exec("pidof $packageName").trim()
-                    when (watchdogEvaluator.evaluate(pidOut)) {
+                    val pidResult = PrivilegeManager.exec("pidof $packageName")
+                    when (watchdogEvaluator.evaluate(pidResult)) {
                         WatchdogDecision.GLITCH -> {
-                            GameOptimizerEngine.log("Watchdog: Binder/execution glitch ($pidOut). Retrying...", GameOptimizerEngine.LogType.INFO)
+                            val detail = pidResult.transportError ?: pidResult.stderr.ifBlank { "exit=${pidResult.exitCode}" }
+                            GameOptimizerEngine.log("Watchdog: Binder/execution glitch ($detail). Retrying...", GameOptimizerEngine.LogType.INFO)
                         }
                         WatchdogDecision.MISSING_PENDING -> {
                             GameOptimizerEngine.log("Watchdog: Process not detected (${watchdogEvaluator.consecutiveEmptyCount}/2 checks for $packageName)", GameOptimizerEngine.LogType.INFO)

@@ -32,15 +32,6 @@ data class ShellResult(
 
     override fun describeContents(): Int = 0
 
-    /**
-     * Temporary bridge for callers still using PrivilegeManager.exec(String).
-     */
-    fun toLegacyString(): String {
-        if (transportError != null) return "ERROR: $transportError"
-        if (timedOut) return "ERROR: Command timed out"
-        return stdout
-    }
-
     companion object CREATOR : Parcelable.Creator<ShellResult> {
         override fun createFromParcel(parcel: Parcel): ShellResult = ShellResult(parcel)
         override fun newArray(size: Int): Array<ShellResult?> = arrayOfNulls(size)

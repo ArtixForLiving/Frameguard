@@ -1,5 +1,6 @@
 package com.optimizer.game
 
+import com.optimizer.game.privilege.ShellResult
 import com.optimizer.game.service.WatchdogCycleEvaluator
 import com.optimizer.game.service.WatchdogDecision
 import org.junit.Assert.assertEquals
@@ -44,5 +45,25 @@ class WatchdogUnitTest {
 
         assertEquals(WatchdogDecision.GLITCH, evaluator.evaluate("ERROR: binder failed"))
         assertEquals(1, evaluator.consecutiveEmptyCount)
+    }
+
+    @Test
+    fun testShellResultExitOneEmptyStdoutCountsTowardExitWhileTransportErrorIsGlitch() {
+        assertEquals(
+            WatchdogDecision.MISSING_PENDING,
+            evaluator.evaluate(ShellResult(exitCode = 1, stdout = "", stderr = ""))
+        )
+        assertEquals(1, evaluator.consecutiveEmptyCount)
+
+        assertEquals(
+            WatchdogDecision.GLITCH,
+            evaluator.evaluate(ShellResult(exitCode = -1, stdout = "", stderr = "", transportError = "daemon died"))
+        )
+        assertEquals(1, evaluator.consecutiveEmptyCount)
+
+        assertEquals(
+            WatchdogDecision.EXIT_CONFIRMED,
+            evaluator.evaluate(ShellResult(exitCode = 1, stdout = "", stderr = ""))
+        )
     }
 }

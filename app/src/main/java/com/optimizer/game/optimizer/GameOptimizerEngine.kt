@@ -5,6 +5,7 @@ import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.view.Display
 import com.optimizer.game.privilege.PrivilegeManager
+import com.optimizer.game.privilege.ShellResult
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -227,7 +228,7 @@ object GameOptimizerEngine {
             val supported = display?.supportedModes?.any { Math.round(it.refreshRate) == hz }
             if (supported == true) return true
         }
-        val out = PrivilegeManager.exec("dumpsys display")
+        val out = PrivilegeManager.exec("dumpsys display").stdout
         return out.contains("${hz}.0 fps", ignoreCase = true) ||
                 out.contains("${hz}fps", ignoreCase = true) ||
                 out.contains("fps=${hz}", ignoreCase = true)
@@ -245,14 +246,31 @@ object GameOptimizerEngine {
         onProgress(1, 4, "Verifying dex metadata and dependencies...")
         log("dex2oat: verifying primary.vdex", LogType.INFO)
 
-        val output = try {
+        val res = try {
             withTimeoutOrNull(120_000L) {
                 PrivilegeManager.exec("cmd package compile -m speed -f $packageName")
-            } ?: "ERROR: dex2oat compilation timed out after 120s"
+            } ?: ShellResult(
+                exitCode = -1,
+                stdout = "",
+                stderr = "",
+                timedOut = true,
+                transportError = "dex2oat compilation timed out after 120s"
+            )
         } catch (e: Exception) {
-            "ERROR: ${e.message}"
+            ShellResult(
+                exitCode = -1,
+                stdout = "",
+                stderr = "",
+                transportError = e.message ?: "dex2oat compilation failed"
+            )
         }
-        log(output, if (output.contains("Success", ignoreCase = true)) LogType.STDOUT else LogType.INFO)
+        val output = if (res.transportError != null) {
+            "ERROR: ${res.transportError}"
+        } else {
+            res.stdout.ifBlank { res.stderr }
+        }
+        val isSuccess = res.isOk && res.stdout.contains("Success", ignoreCase = true)
+        log(output, if (isSuccess) LogType.STDOUT else LogType.INFO)
 
         onProgress(2, 4, "Optimizing bytecode and compiling hot methods (speed)...")
         log("dex2oat: compiling hot methods (speed)", LogType.INFO)
@@ -260,7 +278,6 @@ object GameOptimizerEngine {
         onProgress(3, 4, "Writing compiled oat artifacts to system cache...")
         log("dex2oat: writing oat artifact to /data/dalvik-cache", LogType.INFO)
 
-        val isSuccess = output.contains("Success", ignoreCase = true)
         if (isSuccess) {
             onProgress(4, 4, "Success (exit=0)")
             log("Success (exit=0)", LogType.STDOUT)
@@ -298,13 +315,13 @@ object GameOptimizerEngine {
         // 1. Force-stop target package first so SurfaceFlinger applies overlay rule cleanly on cold start
         val stopCmd = "am force-stop $packageName"
         log(stopCmd, LogType.COMMAND)
-        val stopOut = PrivilegeManager.exec(stopCmd)
+        val stopOut = PrivilegeManager.exec(stopCmd).stdout
         if (stopOut.isNotBlank()) log(stopOut, LogType.STDOUT)
 
         // 2. Pre-launch swapchain display scaling if renderScale < 100
         if (renderScale < 100) {
-            val sizeOut = PrivilegeManager.exec("wm size")
-            val densityOut = PrivilegeManager.exec("wm density")
+            val sizeOut = PrivilegeManager.exec("wm size").stdout
+            val densityOut = PrivilegeManager.exec("wm density").stdout
             val snapshot = parseWmGeometry(sizeOut, densityOut)
             activeSnapshot = snapshot
             if (context != null) {
@@ -318,12 +335,12 @@ object GameOptimizerEngine {
 
             val sizeCmd = "wm size ${metrics.width}x${metrics.height}"
             log(sizeCmd, LogType.COMMAND)
-            val sizeRes = PrivilegeManager.exec(sizeCmd)
+            val sizeRes = PrivilegeManager.exec(sizeCmd).stdout
             if (sizeRes.isNotBlank()) log(sizeRes, LogType.STDOUT)
 
             val densityCmd = "wm density ${metrics.dpi}"
             log(densityCmd, LogType.COMMAND)
-            val densityRes = PrivilegeManager.exec(densityCmd)
+            val densityRes = PrivilegeManager.exec(densityCmd).stdout
             if (densityRes.isNotBlank()) log(densityRes, LogType.STDOUT)
 
             log("Render scale pre-launch configured: ${renderScale}% (${metrics.width}x${metrics.height} @ ${metrics.dpi}dpi)", LogType.INFO)
@@ -332,7 +349,7 @@ object GameOptimizerEngine {
         // 3. Lock Android 15/16 DeviceConfig background sync
         val syncLockCmd = "device_config set_sync_disabled_for_tests until_reboot"
         log(syncLockCmd, LogType.COMMAND)
-        val syncLockOut = PrivilegeManager.exec(syncLockCmd)
+        val syncLockOut = PrivilegeManager.exec(syncLockCmd).stdout
         if (syncLockOut.isNotBlank()) log(syncLockOut, LogType.STDOUT)
 
         // 3. Configure game_overlay FPS rule
@@ -355,16 +372,18 @@ object GameOptimizerEngine {
 
         val overlayCmd = "device_config put game_overlay $packageName mode=2,fps=$effectiveFps:mode=3,fps=$effectiveFps"
         log(overlayCmd, LogType.COMMAND)
-        val overlayOut = PrivilegeManager.exec(overlayCmd)
+        val overlayOut = PrivilegeManager.exec(overlayCmd).stdout
         if (overlayOut.isNotBlank()) log(overlayOut, LogType.STDOUT)
 
         // 4. Cache current refresh rates if not already saved
         if (!hasCachedRates) {
-            val peak = PrivilegeManager.exec("settings get system peak_refresh_rate").trim()
-            val min = PrivilegeManager.exec("settings get system min_refresh_rate").trim()
+            val peakRes = PrivilegeManager.exec("settings get system peak_refresh_rate")
+            val minRes = PrivilegeManager.exec("settings get system min_refresh_rate")
+            val peak = peakRes.stdout.trim()
+            val min = minRes.stdout.trim()
 
-            cachedPeakRefreshRate = if (peak.isNotEmpty() && peak != "null" && !peak.contains("ERROR")) peak else "120.0"
-            cachedMinRefreshRate = if (min.isNotEmpty() && min != "null" && !min.contains("ERROR")) min else "60.0"
+            cachedPeakRefreshRate = if (peakRes.isOk && peak.isNotEmpty() && peak != "null") peak else "120.0"
+            cachedMinRefreshRate = if (minRes.isOk && min.isNotEmpty() && min != "null") min else "60.0"
             hasCachedRates = true
             log("Cached display refresh rates: peak=$cachedPeakRefreshRate min=$cachedMinRefreshRate", LogType.INFO)
         }
@@ -372,19 +391,19 @@ object GameOptimizerEngine {
         // Cache user auto-rotate state so it is never permanently flipped
         if (cachedAutoRotate == null) {
             cachedAutoRotate = parseAutoRotateState(
-                PrivilegeManager.exec("settings get system accelerometer_rotation")
+                PrivilegeManager.exec("settings get system accelerometer_rotation").stdout
             )
         }
 
         // 5. Set custom mode intervention config and activate Game Mode
         val gameSetCmd = "cmd game set --mode 2 --fps $effectiveFps $packageName"
         log(gameSetCmd, LogType.COMMAND)
-        val gameSetOut = PrivilegeManager.exec(gameSetCmd)
+        val gameSetOut = PrivilegeManager.exec(gameSetCmd).stdout
         if (gameSetOut.isNotBlank()) log(gameSetOut, LogType.STDOUT)
 
         val gameModeCmd = "cmd game mode custom $packageName"
         log(gameModeCmd, LogType.COMMAND)
-        val gameModeOut = PrivilegeManager.exec(gameModeCmd)
+        val gameModeOut = PrivilegeManager.exec(gameModeCmd).stdout
         if (gameModeOut.isNotBlank()) log(gameModeOut, LogType.STDOUT)
 
         // 6. Lock display refresh rate to optimal integer multiple
@@ -399,7 +418,7 @@ object GameOptimizerEngine {
         if (doze) {
             val dozeCmd = "dumpsys deviceidle force-idle"
             log(dozeCmd, LogType.COMMAND)
-            val dozeOut = PrivilegeManager.exec(dozeCmd)
+            val dozeOut = PrivilegeManager.exec(dozeCmd).stdout
             if (dozeOut.isNotBlank()) log(dozeOut, LogType.STDOUT)
         }
 
@@ -415,17 +434,17 @@ object GameOptimizerEngine {
             }
         }
         if (!launched) {
-            val resolveOut = PrivilegeManager.exec("cmd package resolve-activity --brief $packageName")
+            val resolveOut = PrivilegeManager.exec("cmd package resolve-activity --brief $packageName").stdout
             val component = resolveOut.lines().firstOrNull { it.contains("/") && !it.contains("=") }?.trim()
             if (!component.isNullOrEmpty()) {
                 val startCmd = "am start -n $component"
                 log(startCmd, LogType.COMMAND)
-                val startOut = PrivilegeManager.exec(startCmd)
+                val startOut = PrivilegeManager.exec(startCmd).stdout
                 if (startOut.isNotBlank()) log(startOut, LogType.STDOUT)
             } else {
                 val startCmd = "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName"
                 log(startCmd, LogType.COMMAND)
-                val startOut = PrivilegeManager.exec(startCmd)
+                val startOut = PrivilegeManager.exec(startCmd).stdout
                 if (startOut.isNotBlank()) log(startOut, LogType.STDOUT)
             }
         }
@@ -447,7 +466,7 @@ object GameOptimizerEngine {
             val restoreCmds = buildRestoreCommands(snapshot)
             for (cmd in restoreCmds) {
                 log(cmd, LogType.COMMAND)
-                val out = PrivilegeManager.exec(cmd)
+                val out = PrivilegeManager.exec(cmd).stdout
                 if (out.isNotBlank()) log(out, LogType.STDOUT)
             }
             if (context != null) {
@@ -457,12 +476,12 @@ object GameOptimizerEngine {
         } else if (currentRenderScale < 100) {
             val resetSizeCmd = "wm size reset"
             log(resetSizeCmd, LogType.COMMAND)
-            val resetSizeOut = PrivilegeManager.exec(resetSizeCmd)
+            val resetSizeOut = PrivilegeManager.exec(resetSizeCmd).stdout
             if (resetSizeOut.isNotBlank()) log(resetSizeOut, LogType.STDOUT)
 
             val resetDensityCmd = "wm density reset"
             log(resetDensityCmd, LogType.COMMAND)
-            val resetDensityOut = PrivilegeManager.exec(resetDensityCmd)
+            val resetDensityOut = PrivilegeManager.exec(resetDensityCmd).stdout
             if (resetDensityOut.isNotBlank()) log(resetDensityOut, LogType.STDOUT)
         }
         currentRenderScale = 100
@@ -470,24 +489,24 @@ object GameOptimizerEngine {
         // 1. Release Deep Doze
         val unforceCmd = "dumpsys deviceidle unforce"
         log(unforceCmd, LogType.COMMAND)
-        val unforceOut = PrivilegeManager.exec(unforceCmd)
+        val unforceOut = PrivilegeManager.exec(unforceCmd).stdout
         if (unforceOut.isNotBlank()) log(unforceOut, LogType.STDOUT)
 
         // 2. Remove game_overlay intervention and restore sync
         val deleteOverlayCmd = "device_config delete game_overlay $packageName"
         log(deleteOverlayCmd, LogType.COMMAND)
-        val deleteOverlayOut = PrivilegeManager.exec(deleteOverlayCmd)
+        val deleteOverlayOut = PrivilegeManager.exec(deleteOverlayCmd).stdout
         if (deleteOverlayOut.isNotBlank()) log(deleteOverlayOut, LogType.STDOUT)
 
         val unlockSyncCmd = "device_config set_sync_disabled_for_tests none"
         log(unlockSyncCmd, LogType.COMMAND)
-        val unlockSyncOut = PrivilegeManager.exec(unlockSyncCmd)
+        val unlockSyncOut = PrivilegeManager.exec(unlockSyncCmd).stdout
         if (unlockSyncOut.isNotBlank()) log(unlockSyncOut, LogType.STDOUT)
 
         // 3. Reset game mode to STANDARD (1)
         val resetGameCmd = "cmd game mode 1 $packageName"
         log(resetGameCmd, LogType.COMMAND)
-        val resetOut = PrivilegeManager.exec(resetGameCmd)
+        val resetOut = PrivilegeManager.exec(resetGameCmd).stdout
         if (resetOut.isNotBlank()) log(resetOut, LogType.STDOUT)
 
         // 4. Restore cached or default refresh rates
@@ -529,8 +548,9 @@ object GameOptimizerEngine {
      * Returns temperature in Celsius (e.g. 41.8).
      */
     suspend fun queryThermalReading(): Float? {
-        val out = PrivilegeManager.exec("dumpsys battery")
-        val tempLine = out.lines().firstOrNull { it.contains("temperature:", ignoreCase = true) }
+        val res = PrivilegeManager.exec("dumpsys battery")
+        if (!res.isOk) return null
+        val tempLine = res.stdout.lines().firstOrNull { it.contains("temperature:", ignoreCase = true) }
         return tempLine?.substringAfter("temperature:")?.trim()?.toFloatOrNull()?.let { it / 10f }
     }
 }

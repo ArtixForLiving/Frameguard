@@ -1,6 +1,7 @@
 package com.optimizer.game
 
 import com.optimizer.game.adb.AdbMdnsDiscovery
+import com.optimizer.game.adb.DaemonProtocol
 import com.optimizer.game.adb.DaemonServer
 import com.optimizer.game.optimizer.GameOptimizerEngine
 import com.optimizer.game.privilege.PrivilegeSource
@@ -48,8 +49,11 @@ class PrivilegeUnitTest {
 
     @Test
     fun testDaemonConstants() {
-        assertEquals(25890, DaemonServer.DAEMON_PORT)
-        assertEquals("---FRAMEGUARD_EOF---", DaemonServer.EOF_MARKER)
+        assertEquals("/data/local/tmp/.fg_daemon_port", DaemonServer.PORT_FILE_PATH)
+        assertEquals(0x01.toByte(), DaemonProtocol.FRAME_PING)
+        assertEquals(0x02.toByte(), DaemonProtocol.FRAME_EXEC)
+        assertEquals(0x03.toByte(), DaemonProtocol.FRAME_EXEC_ARGS)
+        assertEquals(0x04.toByte(), DaemonProtocol.FRAME_SHUTDOWN)
     }
 
     @Test
@@ -90,8 +94,8 @@ class PrivilegeUnitTest {
 
     @Test
     fun testCompileShadersGracefulFallback() = kotlinx.coroutines.runBlocking {
-        // In unbound unit test environment, PrivilegeManager.exec returns ERROR
-        // With HARD-03 non-blocking fallback, compileShaders returns true
+        // In unbound unit test environment, PrivilegeManager.exec returns ShellResult with transportError.
+        // With non-blocking fallback, compileShaders returns true.
         val result = GameOptimizerEngine.compileShaders("com.example.game")
         assertTrue(result)
     }

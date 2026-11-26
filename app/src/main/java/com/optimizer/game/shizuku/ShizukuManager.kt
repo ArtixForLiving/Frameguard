@@ -174,9 +174,7 @@ object ShizukuManager : PrivilegeBackend {
         }
     }
 
-    override suspend fun exec(command: String): String = execResult(command).toLegacyString()
-
-    override suspend fun execResult(command: String): ShellResult =
+    override suspend fun exec(command: String): ShellResult =
         invokeRemote { service -> service.runCommand(command) }
 
     override suspend fun execArgs(args: List<String>): ShellResult =
