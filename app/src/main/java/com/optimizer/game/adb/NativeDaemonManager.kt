@@ -44,10 +44,10 @@ object NativeDaemonManager {
     }
 
     /**
-     * Checks if the daemon process is running on currentPort and passes mutual auth + PING.
+     * Checks if the daemon process is running on currentPort (or local port file) and passes mutual auth + PING.
      */
     suspend fun isDaemonAlive(context: Context): Boolean = withContext(Dispatchers.IO) {
-        val port = currentPort ?: return@withContext false
+        val port = currentPort ?: readLocalPortFile()?.also { currentPort = it } ?: return@withContext false
         val token = getOrCreateAuthToken(context)
         val result = sendFrameToPort(port, token, timeoutMs = 2_000) { out ->
             out.writeByte(DaemonProtocol.FRAME_PING.toInt())
@@ -58,6 +58,17 @@ object NativeDaemonManager {
         } else {
             currentPort = null
             false
+        }
+    }
+
+    private fun readLocalPortFile(): Int? {
+        return try {
+            val file = File(DaemonServer.PORT_FILE_PATH)
+            if (!file.exists()) return null
+            val parsed = file.readText().trim().toIntOrNull() ?: return null
+            if (parsed in 1024..65535) parsed else null
+        } catch (_: Exception) {
+            null
         }
     }
 
