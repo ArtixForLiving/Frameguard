@@ -21,7 +21,7 @@ Modern mobile gaming often suffers from erratic frame pacing, thermal throttling
    FrameGuard operates strictly within official Android framework APIs and system shell boundaries (`UID 2000`). It does not modify APKs, patch memory, or hook game engines. Your games remain 100% untouched, ensuring complete safety with anti-cheat systems and Google Play Integrity.
 
 4. **Complete Transparency (No Snake Oil)**  
-   FrameGuard has no hidden tricks or placebo "RAM booster" buttons. Every optimization maps directly to documented Android system commands (`device_config`, `settings`, `cmd package compile`, `dumpsys deviceidle`). An integrated live terminal lets you see exactly what commands run on your device.
+   FrameGuard has no hidden tricks or placebo toggles. Every optimization maps directly to documented Android system commands (`cmd game`, `settings`, `wm`, `am kill-all`, `cmd notification set_dnd`). An integrated live terminal lets you see exactly what commands run on your device.
 
 ---
 
@@ -30,17 +30,20 @@ Modern mobile gaming often suffers from erratic frame pacing, thermal throttling
 - **Target FPS & Refresh Rate Synchronization**  
   Synchronizes chosen target frame rates (30, 45, 60, 90, 120 FPS) with physical display panel modes (60Hz, 90Hz, 120Hz). This locks the hardware VSYNC interval, eliminating micro-stutters and frame pacing jitter.
 
-- **Pre-Launch Swapchain Render Scaling**  
-  Adjusts the internal display window render scale (100% Native, 75% Balanced, 50% Ultra-Performance) before the game launches. This significantly reduces GPU fill-rate workload on demanding 3D games while keeping the display crisp.
+- **Per-App Game Downscale & Experimental WM Render Scale**  
+  Applies per-app surface buffer scaling (`cmd game set --downscale`: `1.0x`, `0.85x`, `0.75x`, `0.6x`) without altering System UI, plus an optional **Experimental WM Render Scale** (`wm size` / `wm density`) with verified snapshot recovery.
 
 - **Adaptive Thermal Limiter**  
-  Monitors Android HAL thermal status in real-time. If the device reaches moderate thermal levels, FrameGuard automatically caps the frame rate to 30 FPS, letting the device cool down gracefully without abrupt kernel thermal throttling.
+  Polls Android `ThermalHAL` (`PowerManager.getThermalHeadroom`) every 10s. If the device reaches `SEVERE` thermal headroom, FrameGuard clamps supported games to 30 FPS and releases back to the target FPS when cool.
 
-- **Ahead-Of-Time (AOT) Shader Compilation**  
-  Triggers Android Runtime (ART) speed compilation (`cmd package compile -m speed -f`) for your game. This compiles game code into native machine code ahead of time, eliminating first-time shader stutters and JIT compiler spikes during intense gameplay.
+- **Safe RAM Trim (`am kill-all`)**  
+  Clears cached background processes before launching your game to free memory bandwidth without killing active foreground services.
 
-- **Deep Doze & Background Standby**  
-  Applies system-level device idle directives to suppress non-essential background tasks, freeing up CPU cores and memory bandwidth exclusively for your active game.
+- **Auto Gaming DND (`cmd notification set_dnd`)**  
+  Automatically switches Do Not Disturb to `priority` during boost sessions (when previously off) and restores your original `zen_mode` on exit.
+
+- **Live Capability Probe & 3-Stage Filtered UI**  
+  Probes device support (`cmd game`, `wm` write access, `set_dnd`, panel refresh rates, and OEM game daemons) on first connect and hides unsupported controls.
 
 - **Transparent Live Shell Terminal**  
   Displays a real-time console log in the UI showing every shell command executed and the exact response from Android's subsystem.
@@ -66,20 +69,20 @@ Choose either of the two rootless options:
 
 ### 2. Configure Your Game Profile
 
-1. **Select Target App:** Tap **SELECT APPLICATION** and choose your game from the list.
-2. **Set Frame Pacing & Display Mode:** Choose your target frame rate (e.g., 60 FPS, 90 FPS, 120 FPS). FrameGuard will automatically match the display refresh rate.
-3. **Choose Render Scaling:** Select 100% (Native), 75% (Balanced), or 50% (Performance).
-4. **Adaptive Thermal Limiter:** Set to **OFF** for standard sessions, or **ADAPTIVE** for long gaming sessions where you want automatic thermal protection.
-5. **System Directives:** Toggle **Deep Doze** (suppress background apps) and **ART Compiler** (pre-compile shaders) as desired.
+1. **Select Target App:** Tap **CHANGE** in Target Application and choose your game from the list.
+2. **Set Frame Pacing & Display Mode:** Choose your target frame rate (e.g., 60 FPS, 90 FPS, 120 FPS). FrameGuard automatically pairs the display refresh rate.
+3. **Choose Per-App Downscale:** Select `1.0x` (Native), `0.85x`, `0.75x`, or `0.6x` (applies on launch; Experimental **WM Render Scale** is also available if supported).
+4. **Adaptive Thermal Limiter:** Set to **OFF** for standard sessions, or **ADAPTIVE** for long gaming sessions where you want automatic 30 FPS thermal protection.
+5. **System Directives:** Toggle **Safe RAM Trim** (`am kill-all`) and **Auto Gaming DND** (`set_dnd`) as desired.
 
 ### 3. Launch & Play
 
-- Tap **`[ ENGAGE OPTIMIZER ]`**. FrameGuard applies all directives, displays the output in the terminal, and launches your game.
-- A persistent notification keeps you informed of your current FPS cap, SoC temperatures, and active optimizations.
+- Tap **`ENGAGE PROFILE & LAUNCH`**. FrameGuard applies all directives, verifies `GameManager` Mode 2, displays the output in the terminal, and launches your game.
+- A persistent notification lets you monitor status (`SYNC LOCKED`, `THERMAL 30`, `RATE OVERRIDDEN`) or live-switch to **30 FPS** without restarting the game.
 
 ### 4. Restore When Finished
 
-- When you finish playing, tap **STOP & RESTORE** inside FrameGuard or from the notification. FrameGuard immediately restores all system settings (refresh rates, sync, doze) back to their original defaults.
+- When you finish playing (or exit the game), tap **`DISENGAGE & RESTORE DEFAULTS`** inside FrameGuard or **`STOP & RESTORE`** from the notification. The foreground watchdog also restores `cmd game`, refresh rates, `zen_mode`, and `wm` geometry automatically.
 
 ---
 
@@ -103,7 +106,7 @@ FrameGuard uses standard Android 11+ AOSP APIs. However, because different phone
 * **Guide:**
   - Works out of the box with Wireless ADB or Shizuku.
   - Samsung Knox does not block local loopback (`127.0.0.1`) communication.
-  - FrameGuard's system directives override Samsung Game Optimizing Service (GOS) refresh rate locks cleanly via `device_config`.
+  - FrameGuard's system directives coordinate with Samsung Game Optimizing Service (GOS) via `cmd game` and system refresh rate directives.
 
 ### OPPO, OnePlus, Realme (ColorOS / OxygenOS / Realme UI)
 * **Compatibility:** Supported (requires 1 extra setting).
@@ -134,11 +137,12 @@ FrameGuard is engineered following modern Android architecture standards:
   - **Embedded Wireless ADB Engine:** Pure on-device implementation utilizing SPAKE2 key exchange and TLS 1.3 over loopback (`127.0.0.1`), spawning an authenticated standalone `app_process` daemon running under `UID 2000`.
   - **Shizuku IPC Bridge:** Fallback AIDL binder interface (`IShellService.aidl`) connecting to the system Shizuku service.
 - **System Directives Engine:** Interacts with low-level Android subsystems:
-  - `device_config` for frame rate limits and pacing enforcement.
-  - `settings put system` for hardware refresh rate bounds.
-  - `dumpsys deviceidle` for deep doze background state enforcement.
-  - `cmd package compile -m speed -f` for ART dex2oat Ahead-Of-Time compilation.
-  - Android HAL `PowerManager` for real-time hardware thermal throttling telemetry.
+  - `cmd game` (Android 13+) for Game Mode 2 FPS limits and per-app buffer downscaling.
+  - `settings put/delete system` for LTPO-safe hardware refresh rate bounds.
+  - `am kill-all` for safe pre-launch background RAM trimming.
+  - `cmd notification set_dnd` for Auto Gaming DND (`zen_mode`).
+  - `wm size` / `wm density` for optional experimental display scaling with snapshot recovery.
+  - `dumpsys thermalservice` & Android `PowerManager` ThermalHAL for real-time thermal telemetry.
 - **Platform Compatibility:** Targets Android 12 through Android 17 (API Level 31 to 37).
 
 ---
