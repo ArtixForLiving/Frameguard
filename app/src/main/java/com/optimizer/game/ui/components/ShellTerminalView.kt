@@ -41,7 +41,8 @@ fun ShellTerminalView(
     logs: List<GameOptimizerEngine.ShellLogEntry>,
     onClearLogs: () -> Unit,
     modifier: Modifier = Modifier,
-    isExpanded: Boolean = false
+    isExpanded: Boolean = false,
+    title: String = "CLOSED-LOOP SHELL // STDOUT"
 ) {
     val listState = rememberLazyListState()
 
@@ -72,7 +73,7 @@ fun ShellTerminalView(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "SHIZUKU SHELL // STDOUT",
+                text = title,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 9.5.sp,
                 fontWeight = FontWeight.Medium,

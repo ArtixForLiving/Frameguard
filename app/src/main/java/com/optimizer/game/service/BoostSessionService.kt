@@ -441,6 +441,14 @@ class BoostSessionService : Service() {
             context.startService(intent)
         }
 
+        fun switchFps(context: Context, targetFps: Int) {
+            val intent = Intent(context, BoostSessionService::class.java).apply {
+                action = ACTION_SWITCH_FPS
+                putExtra(EXTRA_TARGET_FPS, targetFps)
+            }
+            context.startService(intent)
+        }
+
         fun updateAdaptiveThermal(context: Context, enabled: Boolean) {
             val intent = Intent(context, BoostSessionService::class.java).apply {
                 action = ACTION_UPDATE_THERMAL_CONFIG

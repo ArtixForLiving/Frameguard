@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -161,7 +162,8 @@ fun AppSelectorDrawer(
     isDrawerOpen: Boolean,
     onToggleDrawer: () -> Unit,
     onSelectApp: (GameAppItem) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Column(
         modifier = modifier
@@ -212,10 +214,12 @@ fun AppSelectorDrawer(
             // CHANGE / CLOSE Button
             Box(
                 modifier = Modifier
+                    .alpha(if (enabled) 1.0f else 0.35f)
                     .clip(RoundedCornerShape(4.dp))
                     .background(ObsidianSurface)
                     .border(1.dp, HairlineBorder, RoundedCornerShape(4.dp))
                     .clickable(
+                        enabled = enabled,
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {

@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -39,7 +41,10 @@ fun TelemetryGrid(
     displaySubText: String,
     profileText: String,
     profileSubText: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    thermalValueColor: Color = BoneWhite,
+    displayValueColor: Color = BoneWhite,
+    profileValueColor: Color = BoneWhite
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -53,6 +58,7 @@ fun TelemetryGrid(
                 title = "THERMAL",
                 value = thermalText,
                 subtitle = thermalSubText,
+                valueColor = thermalValueColor,
                 modifier = Modifier.weight(1f)
             )
 
@@ -63,6 +69,7 @@ fun TelemetryGrid(
                 title = "DISPLAY",
                 value = displayText,
                 subtitle = displaySubText,
+                valueColor = displayValueColor,
                 modifier = Modifier.weight(1f)
             )
 
@@ -73,6 +80,7 @@ fun TelemetryGrid(
                 title = "PROFILE",
                 value = profileText,
                 subtitle = profileSubText,
+                valueColor = profileValueColor,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -92,6 +100,7 @@ private fun TelemetryCell(
     title: String,
     value: String,
     subtitle: String,
+    valueColor: Color = BoneWhite,
     modifier: Modifier = Modifier
 ) {
     val config = LocalConfiguration.current
@@ -124,7 +133,7 @@ private fun TelemetryCell(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = BoneWhite,
+                color = valueColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

@@ -3,41 +3,93 @@ package com.optimizer.game.viewmodel
 import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.hardware.display.DisplayManager
-import android.os.BatteryManager
 import android.os.Build
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.optimizer.game.adb.NativeAdbBackend
+import com.optimizer.game.adb.AdbMdnsDiscovery
+import com.optimizer.game.adb.AdbPairingClient
+import com.optimizer.game.adb.AdbPortScanner
+import com.optimizer.game.adb.NativeDaemonManager
 import com.optimizer.game.optimizer.GameOptimizerEngine
+import com.optimizer.game.privilege.CapabilityProbe
+import com.optimizer.game.privilege.DeviceCapabilityProfile
 import com.optimizer.game.privilege.PrivilegeManager
 import com.optimizer.game.privilege.PrivilegeSource
 import com.optimizer.game.privilege.PrivilegeState
+import com.optimizer.game.privilege.ProbeStatus
+import com.optimizer.game.privilege.ProbeStepResult
 import com.optimizer.game.service.BoostSessionService
+import com.optimizer.game.service.ClosedLoopStatus
 import com.optimizer.game.shizuku.ShizukuManager
 import com.optimizer.game.ui.components.GameAppItem
 import com.optimizer.game.ui.components.triggerWirelessAdbPairing
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import rikka.shizuku.Shizuku
+import java.util.Locale
+
+enum class UiStage {
+    CONNECTION_GATE,
+    CAPABILITY_PROBE,
+    MAIN_CONSOLE
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val privilegeState: StateFlow<PrivilegeState> = PrivilegeManager.state
     val isBoostActive: StateFlow<Boolean> = BoostSessionService.isBoostActive
+    val closedLoopStatus: StateFlow<ClosedLoopStatus> = BoostSessionService.closedLoopStatus
+    val isClamped30Fps: StateFlow<Boolean> = BoostSessionService.isClamped30Fps
+    val effectiveRefreshRateHz: StateFlow<Float?> = BoostSessionService.effectiveRefreshRateHz
+    val activePackage: StateFlow<String?> = BoostSessionService.activePackage
+    val currentTemperatureC: StateFlow<Float?> = BoostSessionService.currentTemperatureC
     val pairedRefreshRate: StateFlow<String> = GameOptimizerEngine.pairedRefreshRate
 
-    private val _currentDisplayHz = MutableStateFlow("120Hz")
+    private val _currentDisplayHz = MutableStateFlow("60Hz")
     val currentDisplayHz: StateFlow<String> = _currentDisplayHz.asStateFlow()
+
+    private val _uiStage = MutableStateFlow(UiStage.CONNECTION_GATE)
+    val uiStage: StateFlow<UiStage> = _uiStage.asStateFlow()
+
+    private val _daemonStoppedReason = MutableStateFlow(false)
+    val daemonStoppedReason: StateFlow<Boolean> = _daemonStoppedReason.asStateFlow()
+
+    private val _hasPendingWmSnapshot = MutableStateFlow(
+        GameOptimizerEngine.loadGeometrySnapshot(application) != null
+    )
+    val hasPendingWmSnapshot: StateFlow<Boolean> = _hasPendingWmSnapshot.asStateFlow()
+
+    private val _deviceProfile = MutableStateFlow(
+        CapabilityProbe.defaultFallbackProfile(application)
+    )
+    val deviceProfile: StateFlow<DeviceCapabilityProfile> = _deviceProfile.asStateFlow()
+
+    private val _probeSteps = MutableStateFlow(CapabilityProbe.initialPendingSteps())
+    val probeSteps: StateFlow<List<ProbeStepResult>> = _probeSteps.asStateFlow()
+
+    private val _probeLogs = MutableStateFlow<List<GameOptimizerEngine.ShellLogEntry>>(emptyList())
+    val probeLogs: StateFlow<List<GameOptimizerEngine.ShellLogEntry>> = _probeLogs.asStateFlow()
+
+    private val _probeElapsedMs = MutableStateFlow(0L)
+    val probeElapsedMs: StateFlow<Long> = _probeElapsedMs.asStateFlow()
+
+    private val _isProbing = MutableStateFlow(false)
+    val isProbing: StateFlow<Boolean> = _isProbing.asStateFlow()
+
+    private val _probeRequiresDecision = MutableStateFlow(false)
+    val probeRequiresDecision: StateFlow<Boolean> = _probeRequiresDecision.asStateFlow()
+
+    private val _isPairingInProgress = MutableStateFlow(false)
+    val isPairingInProgress: StateFlow<Boolean> = _isPairingInProgress.asStateFlow()
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {}
@@ -171,8 +223,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _targetFps = MutableStateFlow(defaultPresets[0].recommendedFps)
     val targetFps: StateFlow<Int> = _targetFps.asStateFlow()
 
-    private val _isDozeEnabled = MutableStateFlow(true)
-    val isDozeEnabled: StateFlow<Boolean> = _isDozeEnabled.asStateFlow()
+    private val _downscaleRatio = MutableStateFlow("1.0")
+    val downscaleRatio: StateFlow<String> = _downscaleRatio.asStateFlow()
+
+    private val _ramTrimEnabled = MutableStateFlow(true)
+    val ramTrimEnabled: StateFlow<Boolean> = _ramTrimEnabled.asStateFlow()
+
+    private val _dndEnabled = MutableStateFlow(true)
+    val dndEnabled: StateFlow<Boolean> = _dndEnabled.asStateFlow()
 
     private val _isAdaptiveThermalEnabled = MutableStateFlow(false)
     val isAdaptiveThermalEnabled: StateFlow<Boolean> = _isAdaptiveThermalEnabled.asStateFlow()
@@ -187,62 +245,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val scaledDisplayMetrics: StateFlow<GameOptimizerEngine.ScaledDisplayMetrics> = _scaledDisplayMetrics.asStateFlow()
 
-    private val _isCompiling = MutableStateFlow(false)
-    val isCompiling: StateFlow<Boolean> = _isCompiling.asStateFlow()
-
-    private val _compileProgress = MutableStateFlow(0f)
-    val compileProgress: StateFlow<Float> = _compileProgress.asStateFlow()
-
-    private val _compileDone = MutableStateFlow(false)
-    val compileDone: StateFlow<Boolean> = _compileDone.asStateFlow()
-
-    private val _thermalValue = MutableStateFlow(getInitialBatteryThermal())
+    private val _thermalValue = MutableStateFlow("--.-°C")
     val thermalValue: StateFlow<String> = _thermalValue.asStateFlow()
 
-    private val _thermalSubText = MutableStateFlow("SOC NOMINAL")
+    private val _thermalSubText = MutableStateFlow("NO SENSOR")
     val thermalSubText: StateFlow<String> = _thermalSubText.asStateFlow()
 
     private val _logs = MutableStateFlow<List<GameOptimizerEngine.ShellLogEntry>>(emptyList())
     val logs: StateFlow<List<GameOptimizerEngine.ShellLogEntry>> = _logs.asStateFlow()
 
+    private var probeJob: Job? = null
+    private var hasEverConnected = false
+
     init {
-        // Collect live engine logs
         viewModelScope.launch {
             GameOptimizerEngine.shellLogs.collect { entry ->
                 _logs.value = (_logs.value + entry).takeLast(100)
             }
         }
 
-        // Log real device hardware configuration dynamically
         logDeviceHardwareInfo()
 
-        // Observe live privilege state transitions and log accurately
+        PrivilegeManager.init(application)
+
+        // Observe live privilege state transitions and route between the 3 UI stages.
         viewModelScope.launch {
             var lastReportedSource: PrivilegeSource? = null
             privilegeState.collect { state ->
-                if (state.isConnected && state.source != lastReportedSource) {
-                    lastReportedSource = state.source
-                    when (state.source) {
-                        PrivilegeSource.SHIZUKU -> {
-                            val version = try {
-                                Shizuku.getVersion()
-                            } catch (_: Exception) {
-                                13
+                _hasPendingWmSnapshot.value = GameOptimizerEngine.loadGeometrySnapshot(application) != null
+
+                if (state.isConnected) {
+                    val sourceChanged = state.source != lastReportedSource
+                    if (sourceChanged) {
+                        lastReportedSource = state.source
+                        when (state.source) {
+                            PrivilegeSource.SHIZUKU -> {
+                                val version = try {
+                                    Shizuku.getVersion()
+                                } catch (_: Exception) {
+                                    13
+                                }
+                                GameOptimizerEngine.log("Shizuku API v$version bound (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
                             }
-                            GameOptimizerEngine.log("shizuku api v$version ready (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
+                            PrivilegeSource.NATIVE_ADB -> {
+                                GameOptimizerEngine.log("Native ADB daemon ready (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
+                            }
+                            else -> Unit
                         }
-                        PrivilegeSource.NATIVE_ADB -> {
-                            GameOptimizerEngine.log("native adb daemon ready (uid=2000)", GameOptimizerEngine.LogType.STDOUT)
-                        }
-                        else -> {}
                     }
-                } else if (!state.isConnected) {
+
+                    hasEverConnected = true
+                    _daemonStoppedReason.value = false
+
+                    if (sourceChanged || _uiStage.value == UiStage.CONNECTION_GATE) {
+                        val cached = CapabilityProbe.loadCachedProfile(application, Build.FINGERPRINT)
+                        if (cached != null) {
+                            applyDeviceProfile(cached)
+                            _uiStage.value = UiStage.MAIN_CONSOLE
+                            GameOptimizerEngine.log(
+                                "Capability cache hit (${Build.MODEL} · ${cached.maxRefreshRateHz}Hz · ${cached.hiddenModules.size} hidden)",
+                                GameOptimizerEngine.LogType.INFO
+                            )
+                        } else if (!_isProbing.value) {
+                            startCapabilityProbe()
+                        }
+                    }
+                } else {
                     lastReportedSource = null
+                    if (hasEverConnected) {
+                        _daemonStoppedReason.value = true
+                    }
+                    if (!isBoostActive.value && closedLoopStatus.value != ClosedLoopStatus.DEGRADED) {
+                        probeJob?.cancel()
+                        _isProbing.value = false
+                        _probeRequiresDecision.value = false
+                        _uiStage.value = UiStage.CONNECTION_GATE
+                    }
+                    updateHardwareThermal()
                 }
             }
         }
 
-        // Live hardware thermal polling loop
+        // Poll ThermalHAL periodically when idle; while boost is active, prefer BoostSessionService.
         viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 updateHardwareThermal()
@@ -250,21 +334,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe boost state changes to refresh telemetry
         viewModelScope.launch {
-            isBoostActive.collect { _ ->
+            isBoostActive.collect {
                 updateHardwareThermal()
             }
         }
 
-        val nativeBackend = NativeAdbBackend(application)
-        PrivilegeManager.registerNativeBackend(nativeBackend)
-        PrivilegeManager.init(application)
+        viewModelScope.launch {
+            currentTemperatureC.collect {
+                updateHardwareThermal()
+            }
+        }
 
-        // Initialize optimizer engine with active game preset and persisted profile
+        viewModelScope.launch {
+            closedLoopStatus.collect { status ->
+                updateHardwareThermal()
+                if (status != ClosedLoopStatus.DEGRADED && !isBoostActive.value && !privilegeState.value.isConnected) {
+                    _uiStage.value = UiStage.CONNECTION_GATE
+                }
+            }
+        }
+
         GameOptimizerEngine.setTargetPackage(defaultPresets[0].packageName)
         loadGameProfile(defaultPresets[0])
-
         loadInstalledGames()
 
         val dm = application.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
@@ -273,10 +365,155 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateDisplayMetrics()
     }
 
+    private fun startCapabilityProbe() {
+        val app = getApplication<Application>()
+        probeJob?.cancel()
+        _uiStage.value = UiStage.CAPABILITY_PROBE
+        _isProbing.value = true
+        _probeRequiresDecision.value = false
+        _probeElapsedMs.value = 0L
+        _probeSteps.value = CapabilityProbe.initialPendingSteps()
+        _probeLogs.value = buildList {
+            if (_hasPendingWmSnapshot.value) {
+                add(
+                    GameOptimizerEngine.ShellLogEntry(
+                        "Pending WM snapshot detected; restoring baseline after probe",
+                        GameOptimizerEngine.LogType.INFO
+                    )
+                )
+            }
+        }
+
+        probeJob = viewModelScope.launch(Dispatchers.IO) {
+            val startMs = System.currentTimeMillis()
+            val timerJob = launch {
+                while (isActive) {
+                    _probeElapsedMs.value = System.currentTimeMillis() - startMs
+                    delay(50)
+                }
+            }
+
+            try {
+                val (profile, finalSteps) = CapabilityProbe.runProbe(
+                    context = app,
+                    targetPackage = _selectedApp.value.packageName,
+                    onStepUpdate = { index, step ->
+                        _probeSteps.update { list ->
+                            if (index in list.indices) {
+                                list.toMutableList().apply { set(index, step) }
+                            } else {
+                                list
+                            }
+                        }
+                        if (step.status == ProbeStatus.PROBING) {
+                            appendProbeLog(step.command, GameOptimizerEngine.LogType.COMMAND)
+                        } else if (step.output.isNotBlank()) {
+                            val type = if (step.status == ProbeStatus.WARN) {
+                                GameOptimizerEngine.LogType.ERROR
+                            } else {
+                                GameOptimizerEngine.LogType.STDOUT
+                            }
+                            appendProbeLog(step.output, type)
+                        }
+                    }
+                )
+
+                _probeSteps.value = finalSteps
+                applyDeviceProfile(profile)
+                _hasPendingWmSnapshot.value = GameOptimizerEngine.loadGeometrySnapshot(app) != null
+
+                if (!profile.supportsWmWrite) {
+                    _probeRequiresDecision.value = true
+                    appendProbeLog(
+                        "OEM security block detected on WM write; awaiting user choice",
+                        GameOptimizerEngine.LogType.ERROR
+                    )
+                } else {
+                    _probeRequiresDecision.value = false
+                    appendProbeLog(
+                        "Probe complete (${profile.hiddenModules.size} modules filtered); entering console",
+                        GameOptimizerEngine.LogType.STDOUT
+                    )
+                    delay(400)
+                    if (_uiStage.value == UiStage.CAPABILITY_PROBE && privilegeState.value.isConnected) {
+                        _uiStage.value = UiStage.MAIN_CONSOLE
+                    }
+                }
+            } catch (e: Exception) {
+                appendProbeLog("Probe error: ${e.message ?: "unknown"}", GameOptimizerEngine.LogType.ERROR)
+                _probeRequiresDecision.value = true
+            } finally {
+                timerJob.cancel()
+                _probeElapsedMs.value = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+                _isProbing.value = false
+            }
+        }
+    }
+
+    private fun appendProbeLog(message: String, type: GameOptimizerEngine.LogType) {
+        _probeLogs.update { current ->
+            (current + GameOptimizerEngine.ShellLogEntry(message, type)).takeLast(40)
+        }
+    }
+
+    private fun applyDeviceProfile(profile: DeviceCapabilityProfile) {
+        _deviceProfile.value = profile
+        GameOptimizerEngine.dndCapabilityAllowed = profile.supportsDnd
+
+        val allowedFps = CapabilityProbe.filterSupportedFpsOptions(profile.maxRefreshRateHz)
+        if (_targetFps.value !in allowedFps) {
+            val clamped = clampFpsToOptions(_targetFps.value, allowedFps)
+            _targetFps.value = clamped
+            GameOptimizerEngine.setTargetFps(clamped)
+        }
+        if (!profile.supportsGameManager && _downscaleRatio.value != "1.0") {
+            _downscaleRatio.value = "1.0"
+            GameOptimizerEngine.setDownscaleRatio("1.0")
+        }
+        if (!profile.supportsWmWrite && _renderScale.value != 100) {
+            _renderScale.value = 100
+            updateDisplayMetrics()
+        }
+    }
+
+    private fun clampFpsToOptions(desiredFps: Int, options: List<Int>): Int {
+        if (desiredFps in options) return desiredFps
+        return options.lastOrNull { it <= desiredFps } ?: options.firstOrNull() ?: 60
+    }
+
+    fun onReProbe() {
+        if (isBoostActive.value || !privilegeState.value.isConnected) return
+        CapabilityProbe.clearCache(getApplication())
+        startCapabilityProbe()
+    }
+
+    fun onContinueFiltered() {
+        _probeRequiresDecision.value = false
+        _uiStage.value = UiStage.MAIN_CONSOLE
+    }
+
+    fun onReVerifyCapabilities() {
+        if (isBoostActive.value) {
+            viewModelScope.launch {
+                GameOptimizerEngine.log(
+                    "Disengage active boost session before re-verifying capabilities",
+                    GameOptimizerEngine.LogType.INFO
+                )
+            }
+            return
+        }
+        if (!privilegeState.value.isConnected) {
+            _uiStage.value = UiStage.CONNECTION_GATE
+            return
+        }
+        CapabilityProbe.clearCache(getApplication())
+        startCapabilityProbe()
+    }
+
     private fun queryCurrentRefreshRate() {
         val dm = getApplication<Application>().getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
         val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
-        val rate = display?.mode?.refreshRate?.let { Math.round(it) } ?: 120
+        val rate = display?.mode?.refreshRate?.let { Math.round(it) } ?: 60
         _currentDisplayHz.value = "${rate}Hz"
     }
 
@@ -284,7 +521,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
 
-            // 1. Dynamic Total RAM
             val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             val memInfo = ActivityManager.MemoryInfo()
             actManager?.getMemoryInfo(memInfo)
@@ -292,7 +528,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Math.round(memInfo.totalMem.toDouble() / (1024.0 * 1024.0 * 1024.0)).toInt()
             } else 8
 
-            // 2. Dynamic SoC / Hardware Model
             val socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 Build.SOC_MODEL.takeIf { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) }
             } else null
@@ -316,7 +551,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // 3. Dynamic Physical Display Metrics
             val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
             val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
             val mode = display?.mode
@@ -383,7 +617,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val sortedApps = resolvedApps.sortedByDescending { it.isInstalled }
                 _availableApps.value = sortedApps
 
-                // If currently selected app matches one of the resolved apps, update it
                 val currentPkg = _selectedApp.value.packageName
                 val matched = sortedApps.find { it.packageName == currentPkg || it.id == _selectedApp.value.id }
                 if (matched != null) {
@@ -395,91 +628,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun getInitialBatteryThermal(): String {
-        return try {
-            val intent = getApplication<Application>().registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-            val raw = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
-            if (raw > 0) String.format(Locale.US, "%.1f°C", raw / 10.0f) else "38.0°C"
-        } catch (_: Exception) {
-            "38.0°C"
-        }
-    }
-
-    private fun extractHalThermal(dump: String): Float? {
-        val halSection = dump.substringAfter("Current temperatures from HAL:", "")
-        if (halSection.isEmpty()) return null
-
-        val socRegex = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=SOC""")
-        val socMatch = socRegex.find(halSection)
-        if (socMatch != null) {
-            return socMatch.groupValues[1].toFloatOrNull()
-        }
-
-        val cpuRegex = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=CPU""")
-        val cpuMatch = cpuRegex.find(halSection)
-        if (cpuMatch != null) {
-            return cpuMatch.groupValues[1].toFloatOrNull()
-        }
-
-        val batRegex = Regex("""Temperature\{mValue=([0-9.]+)[^}]*mName=BATTERY""")
-        val batMatch = batRegex.find(halSection)
-        if (batMatch != null) {
-            return batMatch.groupValues[1].toFloatOrNull()
-        }
-
-        return null
-    }
-
-    private fun readBatteryThermal(): Float? {
-        return try {
-            val intent = getApplication<Application>().registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-            val raw = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
-            if (raw > 0) raw / 10.0f else null
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     private suspend fun updateHardwareThermal() {
-        var temp: Float? = null
-        var sensorSource = "SOC"
+        val boostActive = isBoostActive.value
+        val serviceTemp = if (boostActive) currentTemperatureC.value else null
 
-        if (privilegeState.value.isConnected) {
-            try {
-                val dumpRes = PrivilegeManager.exec("dumpsys thermalservice")
-                if (dumpRes.isOk) {
-                    temp = extractHalThermal(dumpRes.stdout)
-                }
-            } catch (_: Exception) {}
-        }
-
-        if (temp == null) {
-            temp = readBatteryThermal()
-            sensorSource = "BATT"
+        val temp: Float? = when {
+            serviceTemp != null -> serviceTemp
+            privilegeState.value.isConnected -> try {
+                GameOptimizerEngine.queryThermalReading()
+            } catch (_: Exception) {
+                null
+            }
+            else -> null
         }
 
         if (temp != null && temp > 0f) {
             _thermalValue.value = String.format(Locale.US, "%.1f°C", temp)
-
-            val isBoost = isBoostActive.value
-            _thermalSubText.value = when {
-                isBoost -> when {
-                    temp < 40f -> "STABILIZED"
-                    temp < 45f -> "ACTIVE · BOOST"
-                    else -> "WARM · BOOST"
-                }
-                sensorSource == "SOC" -> when {
-                    temp < 38f -> "SOC COOL"
-                    temp < 42f -> "SOC NOMINAL"
-                    temp < 46f -> "SOC WARM"
-                    else -> "SOC ELEVATED"
-                }
-                else -> "BATT SENSOR"
-            }
+            val isSevere = closedLoopStatus.value == ClosedLoopStatus.THERMAL_30 || temp >= 45f
+            _thermalSubText.value = if (isSevere) "HAL SEVERE" else "HAL SKIN"
+        } else {
+            _thermalValue.value = "--.-°C"
+            _thermalSubText.value = "NO SENSOR"
         }
     }
 
     fun onPillClicked() {
+        if (closedLoopStatus.value == ClosedLoopStatus.DEGRADED) {
+            _uiStage.value = UiStage.CONNECTION_GATE
+            return
+        }
         val state = privilegeState.value
         if (!state.isConnected) {
             PrivilegeManager.refreshState()
@@ -488,7 +665,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else {
             viewModelScope.launch {
-                GameOptimizerEngine.log("Privilege backend active: ${state.source} (${state.statusMessage})", GameOptimizerEngine.LogType.STDOUT)
+                GameOptimizerEngine.log(
+                    "Privilege backend active: ${state.source} (${state.statusMessage})",
+                    GameOptimizerEngine.LogType.STDOUT
+                )
             }
         }
     }
@@ -497,33 +677,160 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         triggerWirelessAdbPairing(context)
     }
 
-    fun onConnectShizuku() {
-        ShizukuManager.requestPermission()
-    }
-
-    fun onSelectApp(app: GameAppItem) {
-        _selectedApp.value = app
-        _isAppDrawerOpen.value = false
-        _compileDone.value = false
-        GameOptimizerEngine.setTargetPackage(app.packageName)
-
-        // Load saved profile or apply defaults with persistence
-        loadGameProfile(app)
-
-        viewModelScope.launch {
-            GameOptimizerEngine.log("target set -> ${app.packageName}", GameOptimizerEngine.LogType.STDOUT)
-            GameOptimizerEngine.log("smart preset applied: ${_targetFps.value} FPS (${app.recommendationReason})", GameOptimizerEngine.LogType.INFO)
-            if (app.supportsRenderScale) {
-                GameOptimizerEngine.log("render scale directive available (${_renderScale.value}%)", GameOptimizerEngine.LogType.INFO)
+    fun onConnectWirelessAdb(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            PrivilegeManager.refreshState()
+            delay(350)
+            if (!privilegeState.value.isConnected) {
+                val port = AdbPortScanner.findOpenPort(context)
+                if (port != null) {
+                    NativeDaemonManager.ensureDaemonStarted(context, port)
+                    PrivilegeManager.refreshState()
+                    delay(250)
+                }
+            }
+            if (!privilegeState.value.isConnected) {
+                launch(Dispatchers.Main) {
+                    triggerWirelessAdbPairing(context)
+                }
             }
         }
     }
 
+    fun onPairAdbWithCode(context: Context, portText: String, codeText: String) {
+        val port = portText.trim().toIntOrNull()
+        val code = codeText.trim()
+        if (port == null || port !in 1024..65535 || code.length != 6) {
+            viewModelScope.launch {
+                GameOptimizerEngine.log(
+                    "Invalid pairing input: enter a 6-digit code and port (1024-65535)",
+                    GameOptimizerEngine.LogType.ERROR
+                )
+            }
+            return
+        }
+        if (_isPairingInProgress.value) return
+        _isPairingInProgress.value = true
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val paired = AdbPairingClient.pair(context, port, code)
+                if (paired) {
+                    val discovery = AdbMdnsDiscovery(context)
+                    discovery.startDiscovery()
+                    var connectPort: Int? = null
+                    repeat(15) {
+                        connectPort = discovery.connectPort.value
+                        if (connectPort != null) return@repeat
+                        delay(200)
+                    }
+                    discovery.stopDiscovery()
+
+                    if (connectPort == null) {
+                        connectPort = AdbPortScanner.findOpenPort(context)
+                    }
+                    if (connectPort != null) {
+                        NativeDaemonManager.ensureDaemonStarted(context, connectPort)
+                    }
+                    PrivilegeManager.refreshState()
+                }
+            } finally {
+                _isPairingInProgress.value = false
+            }
+        }
+    }
+
+    fun onConnectShizuku() {
+        PrivilegeManager.refreshState()
+        ShizukuManager.requestPermission()
+    }
+
+    fun onSelectApp(app: GameAppItem) {
+        if (isBoostActive.value) {
+            _isAppDrawerOpen.value = false
+            viewModelScope.launch {
+                GameOptimizerEngine.log(
+                    "Session locked to ${_selectedApp.value.packageName}; disengage first to switch target",
+                    GameOptimizerEngine.LogType.INFO
+                )
+            }
+            return
+        }
+
+        _selectedApp.value = app
+        _isAppDrawerOpen.value = false
+        GameOptimizerEngine.setTargetPackage(app.packageName)
+        loadGameProfile(app)
+
+        viewModelScope.launch {
+            GameOptimizerEngine.log("target set -> ${app.packageName}", GameOptimizerEngine.LogType.STDOUT)
+            GameOptimizerEngine.log(
+                "smart preset applied: ${_targetFps.value} FPS (${app.recommendationReason})",
+                GameOptimizerEngine.LogType.INFO
+            )
+        }
+    }
+
+    fun onSelectDownscale(ratio: String) {
+        if (isBoostActive.value) {
+            viewModelScope.launch {
+                GameOptimizerEngine.log(
+                    "Per-App Game Downscale applies on launch; disengage active session to change",
+                    GameOptimizerEngine.LogType.INFO
+                )
+            }
+            return
+        }
+        val normalized = GameOptimizerEngine.normalizeDownscaleRatio(ratio)
+        _downscaleRatio.value = normalized
+        GameOptimizerEngine.setDownscaleRatio(normalized)
+        saveCurrentGameProfile()
+        viewModelScope.launch {
+            GameOptimizerEngine.log(
+                "per-app game downscale set to ${normalized}x for ${_selectedApp.value.name}",
+                GameOptimizerEngine.LogType.INFO
+            )
+        }
+    }
+
+    fun onToggleRamTrim(enabled: Boolean) {
+        _ramTrimEnabled.value = enabled
+        GameOptimizerEngine.setRamTrimEnabled(enabled)
+        saveCurrentGameProfile()
+        viewModelScope.launch {
+            GameOptimizerEngine.log(
+                "safe RAM trim (am kill-all) ${if (enabled) "ENABLED" else "DISABLED"}",
+                GameOptimizerEngine.LogType.INFO
+            )
+        }
+    }
+
+    fun onToggleDnd(enabled: Boolean) {
+        _dndEnabled.value = enabled
+        GameOptimizerEngine.setDndEnabled(enabled)
+        saveCurrentGameProfile()
+        viewModelScope.launch {
+            GameOptimizerEngine.log(
+                "auto gaming DND ${if (enabled) "ENABLED" else "DISABLED"}",
+                GameOptimizerEngine.LogType.INFO
+            )
+        }
+    }
+
     fun onSelectRenderScale(scale: Int) {
-        if (!_selectedApp.value.supportsRenderScale) return
+        if (isBoostActive.value) {
+            viewModelScope.launch {
+                GameOptimizerEngine.log(
+                    "WindowManager Render Scale applies on launch; disengage active session to change",
+                    GameOptimizerEngine.LogType.INFO
+                )
+            }
+            return
+        }
+        if (!_deviceProfile.value.supportsWmWrite) return
         _renderScale.value = scale
         updateDisplayMetrics()
-        saveGameProfile(_selectedApp.value.packageName, _targetFps.value, scale, _isDozeEnabled.value)
+        saveCurrentGameProfile()
         viewModelScope.launch {
             if (scale < 100) {
                 GameOptimizerEngine.log("render scale set to $scale% for ${_selectedApp.value.name}", GameOptimizerEngine.LogType.INFO)
@@ -539,32 +846,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val baseWidth = display?.mode?.physicalWidth ?: 1080
         val baseHeight = display?.mode?.physicalHeight ?: 2400
         val baseDpi = getApplication<Application>().resources.displayMetrics.densityDpi
-        val scale = if (_selectedApp.value.supportsRenderScale) _renderScale.value else 100
+        val scale = if (_deviceProfile.value.supportsWmWrite) _renderScale.value else 100
         _scaledDisplayMetrics.value = GameOptimizerEngine.computeScaledMetrics(scale, baseWidth, baseHeight, baseDpi)
     }
 
-    private fun saveGameProfile(
-        packageName: String,
-        fps: Int,
-        scale: Int,
-        doze: Boolean,
-        adaptiveThermal: Boolean = _isAdaptiveThermalEnabled.value
-    ) {
+    private fun saveCurrentGameProfile() {
+        val packageName = _selectedApp.value.packageName
         prefs.edit()
-            .putInt("${packageName}_fps", fps)
-            .putInt("${packageName}_scale", scale)
-            .putBoolean("${packageName}_doze", doze)
-            .putBoolean("${packageName}_adaptive_thermal", adaptiveThermal)
-            .putBoolean("adaptive_thermal_${packageName}", adaptiveThermal)
+            .putInt("${packageName}_fps", _targetFps.value)
+            .putInt("${packageName}_scale", _renderScale.value)
+            .putString("${packageName}_downscale", _downscaleRatio.value)
+            .putBoolean("${packageName}_ram_trim", _ramTrimEnabled.value)
+            .putBoolean("${packageName}_dnd", _dndEnabled.value)
+            .putBoolean("${packageName}_adaptive_thermal", _isAdaptiveThermalEnabled.value)
+            .putBoolean("adaptive_thermal_${packageName}", _isAdaptiveThermalEnabled.value)
             .apply()
     }
 
     private fun loadGameProfile(app: GameAppItem) {
-        val savedFps = prefs.getInt("${app.packageName}_fps", app.recommendedFps)
-        val savedScale = if (app.supportsRenderScale) {
+        val allowedFps = CapabilityProbe.filterSupportedFpsOptions(_deviceProfile.value.maxRefreshRateHz)
+        val rawFps = prefs.getInt("${app.packageName}_fps", app.recommendedFps)
+        val savedFps = clampFpsToOptions(rawFps, allowedFps)
+        val savedScale = if (_deviceProfile.value.supportsWmWrite) {
             prefs.getInt("${app.packageName}_scale", 100)
         } else 100
-        val savedDoze = prefs.getBoolean("${app.packageName}_doze", true)
+        val savedDownscale = if (_deviceProfile.value.supportsGameManager) {
+            GameOptimizerEngine.normalizeDownscaleRatio(
+                prefs.getString("${app.packageName}_downscale", "1.0") ?: "1.0"
+            )
+        } else "1.0"
+        val savedRamTrim = prefs.getBoolean("${app.packageName}_ram_trim", true)
+        val savedDnd = prefs.getBoolean("${app.packageName}_dnd", true)
         val savedAdaptiveThermal = prefs.getBoolean(
             "${app.packageName}_adaptive_thermal",
             prefs.getBoolean("adaptive_thermal_${app.packageName}", false)
@@ -572,101 +884,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _targetFps.value = savedFps
         _renderScale.value = savedScale
-        _isDozeEnabled.value = savedDoze
+        _downscaleRatio.value = savedDownscale
+        _ramTrimEnabled.value = savedRamTrim
+        _dndEnabled.value = savedDnd
         _isAdaptiveThermalEnabled.value = savedAdaptiveThermal
+
         GameOptimizerEngine.setTargetFps(savedFps)
+        GameOptimizerEngine.setDownscaleRatio(savedDownscale)
+        GameOptimizerEngine.setRamTrimEnabled(savedRamTrim)
+        GameOptimizerEngine.setDndEnabled(savedDnd)
         updateDisplayMetrics()
     }
 
     fun onToggleAppDrawer() {
+        if (isBoostActive.value) {
+            viewModelScope.launch {
+                GameOptimizerEngine.log(
+                    "Session locked to ${_selectedApp.value.packageName}; disengage first to switch target",
+                    GameOptimizerEngine.LogType.INFO
+                )
+            }
+            return
+        }
         _isAppDrawerOpen.value = !_isAppDrawerOpen.value
     }
 
     fun onSelectFps(fps: Int) {
-        _targetFps.value = fps
-        saveGameProfile(_selectedApp.value.packageName, fps, _renderScale.value, _isDozeEnabled.value)
-        GameOptimizerEngine.setTargetFps(fps)
+        val allowed = CapabilityProbe.filterSupportedFpsOptions(_deviceProfile.value.maxRefreshRateHz)
+        val clamped = clampFpsToOptions(fps, allowed)
+        _targetFps.value = clamped
+        saveCurrentGameProfile()
+        GameOptimizerEngine.setTargetFps(clamped)
         if (isBoostActive.value && privilegeState.value.isConnected) {
-            viewModelScope.launch {
-                val pkg = _selectedApp.value.packageName
-                var effectiveFps = fps
-                val optimalHz = when (fps) {
-                    60 -> "60.0"
-                    90 -> {
-                        val supports90 = GameOptimizerEngine.isRefreshRateSupported(90, getApplication())
-                        if (supports90) "90.0" else "60.0"
-                    }
-                    120 -> "120.0"
-                    30 -> "60.0"
-                    40 -> "120.0"
-                    45 -> "90.0"
-                    else -> "90.0"
-                }
-
-                _targetFps.value = effectiveFps
-
-                // Set custom mode intervention config and activate Custom Game Mode
-                val gameSetCmd = "cmd game set --mode 2 --fps $effectiveFps $pkg"
-                GameOptimizerEngine.log(gameSetCmd, GameOptimizerEngine.LogType.COMMAND)
-                PrivilegeManager.exec(gameSetCmd)
-
-                val gameModeCmd = "cmd game mode custom $pkg"
-                GameOptimizerEngine.log(gameModeCmd, GameOptimizerEngine.LogType.COMMAND)
-                PrivilegeManager.exec(gameModeCmd)
-
-                // Set refresh rate
-                val peakCmd = "settings put system peak_refresh_rate $optimalHz"
-                val minCmd = "settings put system min_refresh_rate $optimalHz"
-                PrivilegeManager.exec(peakCmd)
-                PrivilegeManager.exec(minCmd)
-
-                val pairedLabel = "${optimalHz.substringBefore(".")}Hz"
-                GameOptimizerEngine.setPairedHz(pairedLabel)
-            }
-        }
-    }
-
-    fun onToggleDoze(enabled: Boolean) {
-        _isDozeEnabled.value = enabled
-        saveGameProfile(_selectedApp.value.packageName, _targetFps.value, _renderScale.value, enabled)
-        GameOptimizerEngine.setDozeEnabled(enabled)
-        if (isBoostActive.value && privilegeState.value.isConnected) {
-            viewModelScope.launch {
-                val cmd = if (enabled) "dumpsys deviceidle force-idle" else "dumpsys deviceidle unforce"
-                GameOptimizerEngine.log(cmd, GameOptimizerEngine.LogType.COMMAND)
-                PrivilegeManager.exec(cmd)
-            }
+            BoostSessionService.switchFps(getApplication(), clamped)
         }
     }
 
     fun onToggleAdaptiveThermal(enabled: Boolean) {
         _isAdaptiveThermalEnabled.value = enabled
-        saveGameProfile(_selectedApp.value.packageName, _targetFps.value, _renderScale.value, _isDozeEnabled.value, enabled)
+        saveCurrentGameProfile()
+        if (isBoostActive.value) {
+            BoostSessionService.updateAdaptiveThermal(getApplication(), enabled)
+        }
         viewModelScope.launch {
             val stateDesc = if (enabled) "ENABLED" else "DISABLED"
             GameOptimizerEngine.log("adaptive thermal limiter $stateDesc", GameOptimizerEngine.LogType.INFO)
         }
     }
 
-    fun onRunArtCompile() {
-        // Removed in v1.0.8; stubbed until Task 5 removes the UI button.
-        _isCompiling.value = false
-        _compileDone.value = false
-        _compileProgress.value = 0f
-    }
-
     fun onToggleBoost(context: Context) {
+        if (closedLoopStatus.value == ClosedLoopStatus.DEGRADED) {
+            _uiStage.value = UiStage.CONNECTION_GATE
+            return
+        }
         if (!privilegeState.value.isConnected) return
 
         if (!isBoostActive.value) {
-            val scale = if (_selectedApp.value.supportsRenderScale) _renderScale.value else 100
+            val profile = _deviceProfile.value
+            val scale = if (profile.supportsWmWrite) _renderScale.value else 100
+            val downscale = if (profile.supportsGameManager) _downscaleRatio.value else "1.0"
+            val dnd = if (profile.supportsDnd) _dndEnabled.value else false
             BoostSessionService.start(
                 context = context,
                 packageName = _selectedApp.value.packageName,
                 targetFps = _targetFps.value,
-                dozeEnabled = _isDozeEnabled.value,
+                dozeEnabled = false,
                 renderScale = scale,
-                adaptiveThermalEnabled = _isAdaptiveThermalEnabled.value
+                adaptiveThermalEnabled = _isAdaptiveThermalEnabled.value,
+                downscaleRatio = downscale,
+                ramTrimEnabled = _ramTrimEnabled.value,
+                dndEnabled = dnd
             )
         } else {
             BoostSessionService.stop(context)
