@@ -397,7 +397,7 @@ object GameOptimizerEngine {
                 val scaling = it.groupValues[1].toFloatOrNull() ?: -1f
                 scaling > 0f && abs(scaling - 1.0f) > 0.01f
             }
-        return !hasMode2 && !activeFps && !activeScaling
+        return !activeFps && !activeScaling
     }
 
     internal fun parseRawRefreshRateSetting(rawOutput: String): String {
@@ -554,11 +554,10 @@ object GameOptimizerEngine {
         }
 
         val dumpRes = commandExecutor(listOf("dumpsys", "game"))
-        val expectedDownscale = if (normalized == "1.0") null else normalized
         val verified = setRes.isOk &&
             modeRes.isOk &&
             dumpRes.isOk &&
-            verifyGameManagerMode2(dumpRes.stdout, packageName, targetFps, expectedDownscale)
+            verifyGameManagerMode2(dumpRes.stdout, packageName, targetFps, normalized)
         if (!verified) {
             log("GameManager Mode 2 verification failed for $packageName", LogType.INFO)
         }

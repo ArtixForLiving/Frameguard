@@ -57,6 +57,12 @@ class GameManagerClosedLoopTest {
         """.trimIndent()
         assertTrue(GameOptimizerEngine.verifyGameManagerClean(cleanDump, "com.example.game"))
         assertFalse(GameOptimizerEngine.verifyGameManagerMode2(cleanDump, "com.example.game", 60, null))
+
+        // Manifest-declared Mode 2 entry with zero FPS/scaling intervention after cmd game reset
+        val manifestMode2CleanDump = """
+            [Name:com.example.game Modes:{1=[Game Mode:1, Scaling:-1.0, Use Angle:false, Fps:0], 2=[Game Mode:2, Scaling:-1.0, Use Angle:false, Fps:0]}]
+        """.trimIndent()
+        assertTrue(GameOptimizerEngine.verifyGameManagerClean(manifestMode2CleanDump, "com.example.game"))
     }
 
     @Test
